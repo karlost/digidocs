@@ -48,7 +48,7 @@ class GitWatcherService
 
         try {
             $hashes = [];
-            
+
             // Získej aktuální branch
             $currentBranch = $this->repo->getCurrentBranchName();
             if ($currentBranch) {
@@ -74,13 +74,39 @@ class GitWatcherService
         try {
             $output = $this->repo->execute('diff', '--name-only', "{$oldCommit}..{$newCommit}");
             $output = is_array($output) ? implode("\n", $output) : $output;
-            
+
             $files = array_filter(
                 explode("\n", trim($output)),
                 fn($file) => !empty(trim($file)) && str_ends_with($file, '.php')
             );
 
             return array_values($files);
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Získá všechny soubory změněné v celé Git historii
+     */
+    public function getAllChangedFilesInHistory(): array
+    {
+        if (!$this->isGitAvailable()) {
+            return [];
+        }
+
+        try {
+            // Získej všechny soubory změněné v celé historii (pouze PHP soubory)
+            $output = $this->repo->execute('log', '--name-only', '--pretty=format:', '--diff-filter=A');
+            $output = is_array($output) ? implode("\n", $output) : $output;
+
+            $files = array_filter(
+                explode("\n", trim($output)),
+                fn($file) => !empty(trim($file)) && str_ends_with($file, '.php')
+            );
+
+            // Odstraň duplicity a vrať unikátní soubory
+            return array_values(array_unique($files));
         } catch (Exception $e) {
             return [];
         }
@@ -97,7 +123,7 @@ class GitWatcherService
 
         try {
             $commit = $this->repo->getLastCommit();
-            
+
             return [
                 'id' => (string) $commit->getId(),
                 'subject' => $commit->getSubject(),
@@ -123,7 +149,7 @@ class GitWatcherService
         try {
             $output = $this->repo->execute('log', '--oneline', '--no-merges', "-{$limit}", "{$sinceCommit}..HEAD");
             $output = is_array($output) ? implode("\n", $output) : $output;
-            
+
             return array_filter(
                 explode("\n", trim($output)),
                 fn($commit) => !empty(trim($commit))
@@ -192,7 +218,7 @@ class GitWatcherService
 
         $lastCommitHash = null;
         $currentCommitHashes = $this->getCurrentCommitHashes();
-        
+
         if (!empty($currentCommitHashes)) {
             $lastCommitHash = array_values($currentCommitHashes)[0];
         }
@@ -200,14 +226,14 @@ class GitWatcherService
         while (true) {
             try {
                 $currentHashes = $this->getCurrentCommitHashes();
-                
+
                 if (!empty($currentHashes)) {
                     $currentHash = array_values($currentHashes)[0];
-                    
+
                     if ($lastCommitHash && $currentHash !== $lastCommitHash) {
                         // Nový commit detekován
                         $changedFiles = $this->getChangedFilesInCommit($currentHash, $lastCommitHash);
-                        
+
                         $callback([
                             'type' => 'git_commit',
                             'old_commit' => $lastCommitHash,
@@ -215,11 +241,11 @@ class GitWatcherService
                             'changed_files' => $changedFiles,
                             'commit_info' => $this->getLastCommitInfo()
                         ]);
-                        
+
                         $lastCommitHash = $currentHash;
                     }
                 }
-                
+
                 sleep($interval);
             } catch (Exception $e) {
                 // Log error ale pokračuj ve sledování
@@ -240,7 +266,7 @@ class GitWatcherService
 
         try {
             $hookPath = $this->repo->getRepositoryPath() . '/.git/hooks/post-commit';
-            
+
             $hookContent = <<<'BASH'
 #!/bin/bash
 # AutoDocs post-commit hook
@@ -256,7 +282,7 @@ BASH;
 
             file_put_contents($hookPath, $hookContent);
             chmod($hookPath, 0755);
-            
+
             return true;
         } catch (Exception $e) {
             return false;
@@ -274,11 +300,11 @@ BASH;
 
         try {
             $hookPath = $this->repo->getRepositoryPath() . '/.git/hooks/post-commit';
-            
+
             if (file_exists($hookPath)) {
                 unlink($hookPath);
             }
-            
+
             return true;
         } catch (Exception $e) {
             return false;

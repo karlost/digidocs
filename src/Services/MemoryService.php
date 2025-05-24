@@ -396,6 +396,29 @@ class MemoryService
     }
 
     /**
+     * Zkontroluje jestli už byly nějaké soubory zpracovány
+     */
+    public function hasAnyDocumentedFiles(): bool
+    {
+        $stmt = $this->db->prepare("SELECT COUNT(*) FROM documented_files");
+        $stmt->execute();
+        $count = $stmt->fetchColumn();
+
+        return $count > 0;
+    }
+
+    /**
+     * Získá seznam všech zpracovaných souborů
+     */
+    public function getDocumentedFiles(): array
+    {
+        $stmt = $this->db->prepare("SELECT file_path FROM documented_files");
+        $stmt->execute();
+
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
      * Zajistí existenci databáze a vytvoří tabulky
      */
     private function ensureDatabase(): void

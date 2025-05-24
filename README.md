@@ -144,6 +144,27 @@ git status
 php artisan digidocs:autodocs --force
 ```
 
+### ⚠️ Známé problémy
+
+**Verze 1.3.0 obsahuje následující známé problémy:**
+
+1. **GitAnalyzerTool - trim() errors**
+   - Občasné chyby při zpracování Git výstupu
+   - Neovlivňuje základní funkcionalitu
+   - Workaround: Použij `--force` flag
+
+2. **WatchCommand - path handling**
+   - Problémy s duplicitními cestami na Windows
+   - Neovlivňuje generování dokumentace
+   - Workaround: Restartuj watch command
+
+3. **NeuronAI Tools compatibility**
+   - Některé Tools metody nejsou plně kompatibilní s nejnovější verzí NeuronAI
+   - Základní funkcionalita funguje správně
+   - Plánovaná oprava v příští verzi
+
+**Tyto problémy neovlivňují základní funkcionalitu generování dokumentace a budou opraveny v příští verzi.**
+
 ## 💡 Rychlý start
 
 ```bash

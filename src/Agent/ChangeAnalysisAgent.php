@@ -113,7 +113,7 @@ class ChangeAnalysisAgent extends Agent
             $oldStructure = $oldContent ? $this->getDocumentationAnalyzer()->parseCodeStructure($oldContent) : [];
             $newStructure = $this->getDocumentationAnalyzer()->parseCodeStructure($newContent);
 
-            // Proveď rozšířenou analýzu změn
+            // Proveď rozšířenou analýzu změn - POUZE heuristická analýza, žádné AI
             $analysis = $this->analyzeChangesWithDocumentation($filePath, $oldContent, $newContent, $oldStructure, $newStructure, $existingDoc);
 
             // Zaznamenej analýzu do databáze
@@ -183,8 +183,8 @@ class ChangeAnalysisAgent extends Agent
 
             $prompt = $this->buildAnalysisPrompt($filePath, $oldContent, $newContent);
 
-            \Log::info("ChangeAnalysisAgent: Sending prompt to AI");
-            $response = $this->chat(
+            \Log::info("ChangeAnalysisAgent: Sending prompt to AI using run() method");
+            $response = $this->run(
                 new \NeuronAI\Chat\Messages\UserMessage($prompt)
             );
 
@@ -219,6 +219,44 @@ class ChangeAnalysisAgent extends Agent
     }
 
     /**
+     * Manuálně spustí Tools a vrátí jejich výsledky
+     */
+    private function runToolsManually(string $filePath, string $oldContent, string $newContent): array
+    {
+        $results = [];
+
+        try {
+            // 1. CodeDiffTool
+            $codeDiffTool = new \Digihood\Digidocs\Tools\CodeDiffAnalyzer();
+            $results['diff'] = $codeDiffTool($filePath, null, null, $oldContent, $newContent);
+        } catch (\Exception $e) {
+            $results['diff'] = ['status' => 'error', 'error' => $e->getMessage()];
+        }
+
+        try {
+            // 2. AstCompareTool
+            $astCompareTool = new \Digihood\Digidocs\Tools\AstComparer();
+            $results['ast'] = $astCompareTool($oldContent, $newContent, $filePath);
+        } catch (\Exception $e) {
+            $results['ast'] = ['status' => 'error', 'error' => $e->getMessage()];
+        }
+
+        try {
+            // 3. SemanticAnalysisTool
+            $semanticTool = new \Digihood\Digidocs\Tools\SemanticAnalyzer();
+            $results['semantic'] = $semanticTool(
+                json_encode($results['diff']),
+                json_encode($results['ast']),
+                $filePath
+            );
+        } catch (\Exception $e) {
+            $results['semantic'] = ['status' => 'error', 'error' => $e->getMessage()];
+        }
+
+        return $results;
+    }
+
+    /**
      * Vytvoří prompt pro analýzu změn
      */
     private function buildAnalysisPrompt(string $filePath, string $oldContent, string $newContent): string
@@ -228,10 +266,8 @@ class ChangeAnalysisAgent extends Agent
 **Soubor:** {$filePath}
 
 **Úkol:**
-1. Použij CodeDiffTool pro analýzu rozdílů mezi starým a novým obsahem
-2. Použij AstCompareTool pro porovnání AST struktur
-3. Použij SemanticAnalysisTool pro sémantickou analýzu změn
-4. Na základě všech analýz rozhodni o potřebě regenerace dokumentace
+Porovnej starý a nový obsah souboru a rozhodni, jestli je potřeba regenerovat dokumentaci.
+Máš k dispozici nástroje pro analýzu kódu - použij je podle potřeby.
 
 **Starý obsah:**
 ```php
@@ -356,7 +392,15 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
      */
     private function generateWithClassicAgent(string $filePath): string
     {
-        $documentationAgent = app(\Digihood\Digidocs\Agent\DocumentationAgent::class);
+        // KLÍČOVÁ OPRAVA: Vytvoř novou instanci agenta místo mazání historie
+        // Tím se zachovají systémové instrukce a vyřeší se problém s JSON výstupem
+        $documentationAgent = new \Digihood\Digidocs\Agent\DocumentationAgent();
+
+        // Nastav cost tracker pokud je dostupný
+        if ($this->costTracker) {
+            $documentationAgent->setCostTracker($this->costTracker);
+        }
+
         return $documentationAgent->generateDocumentationForFile($filePath);
     }
 
@@ -464,7 +508,7 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
         $docRelevanceScore = $this->getDocumentationAnalyzer()->calculateDocumentationRelevance($codeChanges, $existingDoc);
 
         // Použij vylepšené heuristiky
-        $heuristicResult = $this->advancedHeuristicAnalysis($filePath, $oldStructure, $newStructure, $existingDoc);
+        $heuristicResult = $this->advancedHeuristicAnalysis($filePath, $oldContent, $newContent, $oldStructure, $newStructure, $existingDoc);
 
         // DEBUG: Log heuristiky
         \Log::info("ChangeAnalysisAgent heuristic result for {$filePath}", [
@@ -688,6 +732,8 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
      */
     private function advancedHeuristicAnalysis(
         string $filePath,
+        string $oldContent,
+        string $newContent,
         array $oldStructure,
         array $newStructure,
         ?array $existingDoc
@@ -704,16 +750,30 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
             ];
         }
 
-        // 2. Pouze privátní změny = přeskoč (kontrola PŘED ostatními)
+        // 2. Pouze privátní změny = zvažuj podle rozsahu změn
         if ($this->onlyPrivateChanges($oldStructure, $newStructure)) {
-            return [
-                'should_regenerate' => false,
-                'confidence' => 0.8,
-                'reason' => 'private_changes_only',
-                'reasoning' => ['Pouze změny v privátních metodách - dokumentace nemusí být aktualizována'],
-                'change_summary' => ['severity' => 'minor'],
-                'affected_sections' => []
-            ];
+            // Zkontroluj rozsah privátních změn
+            $privateChangeImpact = $this->assessPrivateChangeImpact($oldContent, $newContent);
+
+            if ($privateChangeImpact['is_significant']) {
+                return [
+                    'should_regenerate' => true,
+                    'confidence' => 0.7,
+                    'reason' => 'significant_private_changes',
+                    'reasoning' => ['Významné změny v privátních metodách mohou ovlivnit celkovou funkcionalitu'],
+                    'change_summary' => ['severity' => 'moderate'],
+                    'affected_sections' => []
+                ];
+            } else {
+                return [
+                    'should_regenerate' => false,
+                    'confidence' => 0.8,
+                    'reason' => 'minor_private_changes',
+                    'reasoning' => ['Pouze drobné změny v privátních metodách - dokumentace zůstává aktuální'],
+                    'change_summary' => ['severity' => 'minor'],
+                    'affected_sections' => []
+                ];
+            }
         }
 
         // 3. Změny ve veřejných metodách = generuj
@@ -883,7 +943,26 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
         $oldPublicMethods = array_filter($oldMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
         $newPublicMethods = array_filter($newMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
 
-        return count($oldPublicMethods) !== count($newPublicMethods);
+        // Kontrola počtu metod
+        if (count($oldPublicMethods) !== count($newPublicMethods)) {
+            return true;
+        }
+
+        // Kontrola signatur metod (parametry, návratové typy)
+        foreach ($newPublicMethods as $newMethod) {
+            $oldMethod = $this->findMethodByName($oldPublicMethods, $newMethod['name']);
+
+            if (!$oldMethod) {
+                return true; // Nová metoda
+            }
+
+            // Porovnej signatury
+            if (!$this->methodSignaturesMatch($oldMethod, $newMethod)) {
+                return true; // Změnila se signatura
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -926,14 +1005,136 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
         $oldPublicMethods = array_filter($oldMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
         $newPublicMethods = array_filter($newMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
 
-        // Porovnej názvy metod
-        $oldNames = array_map(fn($m) => $m['name'], $oldPublicMethods);
-        $newNames = array_map(fn($m) => $m['name'], $newPublicMethods);
+        // Kontrola počtu metod
+        if (count($oldPublicMethods) !== count($newPublicMethods)) {
+            return false;
+        }
 
-        sort($oldNames);
-        sort($newNames);
+        // Porovnej signatury každé metody
+        foreach ($newPublicMethods as $newMethod) {
+            $oldMethod = $this->findMethodByName($oldPublicMethods, $newMethod['name']);
 
-        return $oldNames === $newNames;
+            if (!$oldMethod || !$this->methodSignaturesMatch($oldMethod, $newMethod)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Najdi metodu podle názvu
+     */
+    private function findMethodByName(array $methods, string $name): ?array
+    {
+        foreach ($methods as $method) {
+            if ($method['name'] === $name) {
+                return $method;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Porovnej signatury dvou metod (parametry, návratový typ)
+     */
+    private function methodSignaturesMatch(array $oldMethod, array $newMethod): bool
+    {
+        // Porovnej návratový typ
+        if (($oldMethod['return_type'] ?? '') !== ($newMethod['return_type'] ?? '')) {
+            return false;
+        }
+
+        // Porovnej parametry
+        $oldParams = $oldMethod['parameters'] ?? [];
+        $newParams = $newMethod['parameters'] ?? [];
+
+        if (count($oldParams) !== count($newParams)) {
+            return false;
+        }
+
+        // Porovnej každý parametr
+        for ($i = 0; $i < count($oldParams); $i++) {
+            $oldParam = $oldParams[$i];
+            $newParam = $newParams[$i];
+
+            // Porovnej název parametru
+            if (($oldParam['name'] ?? '') !== ($newParam['name'] ?? '')) {
+                return false;
+            }
+
+            // Porovnej typ parametru
+            if (($oldParam['type'] ?? '') !== ($newParam['type'] ?? '')) {
+                return false;
+            }
+
+            // Porovnej default hodnotu
+            if (($oldParam['default'] ?? null) !== ($newParam['default'] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Zhodnoť dopad privátních změn
+     */
+    private function assessPrivateChangeImpact(string $oldContent, string $newContent): array
+    {
+        $oldLines = explode("\n", $oldContent);
+        $newLines = explode("\n", $newContent);
+
+        $totalLines = max(count($oldLines), count($newLines));
+        $changedLines = abs(count($newLines) - count($oldLines));
+
+        // Počítej změny v řádcích
+        $diffLines = 0;
+        $maxLines = max(count($oldLines), count($newLines));
+        for ($i = 0; $i < $maxLines; $i++) {
+            $oldLine = $oldLines[$i] ?? '';
+            $newLine = $newLines[$i] ?? '';
+            if (trim($oldLine) !== trim($newLine)) {
+                $diffLines++;
+            }
+        }
+
+        $changePercentage = $totalLines > 0 ? ($diffLines / $totalLines) * 100 : 0;
+
+        // Hledej klíčová slova indikující významné změny
+        $significantKeywords = [
+            'new ', 'class ', 'function ', 'return ', 'throw ', 'catch ',
+            'if (', 'else', 'switch', 'case', 'for (', 'while (', 'foreach (',
+            'array_', 'json_', 'file_', 'curl_', 'http_', 'sql', 'database',
+            'cache', 'session', 'config', 'env(', 'log::', 'error', 'exception'
+        ];
+
+        $keywordChanges = 0;
+        $newContentLower = strtolower($newContent);
+        $oldContentLower = strtolower($oldContent);
+
+        foreach ($significantKeywords as $keyword) {
+            $oldCount = substr_count($oldContentLower, $keyword);
+            $newCount = substr_count($newContentLower, $keyword);
+            if ($oldCount !== $newCount) {
+                $keywordChanges++;
+            }
+        }
+
+        // Rozhodnutí o významnosti
+        $isSignificant = (
+            $changePercentage > 20 ||  // Více než 20% řádků změněno
+            $changedLines > 10 ||      // Více než 10 řádků přidáno/odebráno
+            $keywordChanges > 3        // Více než 3 významná klíčová slova změněna
+        );
+
+        return [
+            'is_significant' => $isSignificant,
+            'change_percentage' => $changePercentage,
+            'changed_lines' => $changedLines,
+            'keyword_changes' => $keywordChanges,
+            'total_lines' => $totalLines
+        ];
     }
 
     /**

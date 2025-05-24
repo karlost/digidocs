@@ -116,8 +116,8 @@ class AutoDocsCommand extends Command
                 return 'processed';
             }
 
-            // Použij ChangeAnalysisAgent pro inteligentní rozhodování
-            $documentation = $this->changeAgent->generateDocumentationIfNeeded($relativePath);
+            // Použij ChangeAnalysisAgent pro inteligentní rozhodování s retry logikou
+            $documentation = $this->generateDocumentationWithRetry($relativePath);
 
             if ($documentation === null) {
                 $this->line("   ⏭️  Skipped (no significant changes)");
@@ -127,7 +127,10 @@ class AutoDocsCommand extends Command
             // Ulož dokumentaci
             $docPath = $this->saveDocumentation($relativePath, $documentation);
 
-            // Zaznamenej do memory
+            // NOVÉ: Zaznamenej dokumentované části kódu
+            $this->recordDocumentedCodeParts($relativePath, $documentation);
+
+            // Zaznamenej do memory pouze pokud se vše podařilo
             $currentHash = hash_file('sha256', base_path($relativePath));
             $this->memory->recordDocumentation(
                 $relativePath,
@@ -135,15 +138,119 @@ class AutoDocsCommand extends Command
                 $docPath
             );
 
-            // NOVÉ: Zaznamenej dokumentované části kódu
-            $this->recordDocumentedCodeParts($relativePath, $documentation);
-
             $this->line("   ✅ Generated: {$docPath}");
             return 'processed';
 
         } catch (Exception $e) {
             $this->line("   ❌ Failed: " . $e->getMessage());
             return 'error';
+        }
+    }
+
+    /**
+     * Generuje dokumentaci s retry logikou pro 429 chyby
+     */
+    private function generateDocumentationWithRetry(string $relativePath): ?string
+    {
+        $maxRetries = 3;
+        $retryDelays = [10, 30, 60]; // sekundy
+
+        for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
+            try {
+                // KLÍČOVÁ OPRAVA: Vytvoř novou instanci agenta pro každý pokus
+                // Tím se vyčistí stav konverzace a vyřeší se problém s Tools
+                $changeAgent = new \Digihood\Digidocs\Agent\ChangeAnalysisAgent();
+
+                // Nastav cost tracker pokud je dostupný
+                if ($this->costTracker) {
+                    $changeAgent->setCostTracker($this->costTracker);
+                }
+
+                return $changeAgent->generateDocumentationIfNeeded($relativePath);
+            } catch (\Exception $e) {
+                // Zkontroluj jestli je to retryable chyba
+                if ($this->isRetryableError($e)) {
+                    if ($attempt < $maxRetries) {
+                        $delay = $retryDelays[$attempt];
+                        $errorType = $this->getErrorType($e);
+                        $this->line("   ⏳ {$errorType}, retrying in {$delay}s (attempt " . ($attempt + 2) . "/" . ($maxRetries + 1) . ")");
+                        sleep($delay);
+                        continue;
+                    } else {
+                        $errorType = $this->getErrorType($e);
+                        $this->line("   ❌ {$errorType} exceeded after {$maxRetries} retries");
+                        throw $e;
+                    }
+                } else {
+                    // Pro jiné chyby neprovádíme retry
+                    $errorType = $this->getErrorType($e);
+                    $this->line("   ❌ Non-retryable error ({$errorType}): " . substr($e->getMessage(), 0, 100) . "...");
+                    throw $e;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Zkontroluje jestli je chyba retryable (rate limit nebo tool message chyby)
+     */
+    private function isRetryableError(\Exception $e): bool
+    {
+        return $this->isRateLimitError($e) || $this->isToolMessageError($e);
+    }
+
+    /**
+     * Zkontroluje jestli je chyba způsobená rate limitem
+     */
+    private function isRateLimitError(\Exception $e): bool
+    {
+        $message = $e->getMessage();
+
+        // Zkontroluj různé typy rate limit chyb
+        return str_contains($message, '429 Too Many Requests') ||
+               str_contains($message, 'Rate limit reached') ||
+               str_contains($message, 'rate_limit_exceeded') ||
+               str_contains($message, 'quota_exceeded');
+    }
+
+    /**
+     * Zkontroluje jestli je chyba způsobená nesprávnou sekvencí tool messages
+     */
+    private function isToolMessageError(\Exception $e): bool
+    {
+        $message = $e->getMessage();
+
+        // Zkontroluj chyby s tool messages
+        return str_contains($message, 'messages with role') ||
+               str_contains($message, 'tool\' must be a response') ||
+               str_contains($message, 'Invalid parameter: messages');
+    }
+
+    /**
+     * Určí typ chyby pro lepší debugging
+     */
+    private function getErrorType(\Exception $e): string
+    {
+        $message = $e->getMessage();
+
+        if (str_contains($message, '400 Bad Request')) {
+            return '400 Bad Request';
+        } elseif (str_contains($message, '401 Unauthorized')) {
+            return '401 Unauthorized';
+        } elseif (str_contains($message, '403 Forbidden')) {
+            return '403 Forbidden';
+        } elseif (str_contains($message, '429 Too Many Requests')) {
+            return '429 Rate Limit';
+        } elseif (str_contains($message, '500 Internal Server Error')) {
+            return '500 Server Error';
+        } elseif (str_contains($message, 'Invalid parameter')) {
+            return 'Invalid Parameter';
+        } elseif (str_contains($message, 'messages with role') || str_contains($message, 'tool\' must be a response')) {
+            return 'Tool Message Sequence Error';
+        } else {
+            return 'Unknown';
         }
     }
 
@@ -334,31 +441,149 @@ class AutoDocsCommand extends Command
         $lastProcessedCommit = $this->memory->getLastProcessedCommit();
         $currentCommit = $this->gitWatcher->getCurrentCommitHashes();
 
-        if (empty($currentCommit)) {
-            return [];
-        }
+        // Zkontroluj jestli už byly nějaké soubory zpracovány
+        $hasDocumentedFiles = $this->memory->hasAnyDocumentedFiles();
 
-        $currentCommitHash = array_values($currentCommit)[0];
+        // Pokud je to první spuštění (žádné zpracované soubory), zpracuj všechny commity
+        if (!$hasDocumentedFiles) {
+            if (empty($currentCommit)) {
+                $this->line("📭 No Git repository available for first run.");
+                return [];
+            }
 
-        // Pokud je to první spuštění nebo force, zpracuj soubory z posledního commitu
-        if (!$lastProcessedCommit || $this->option('force')) {
-            $this->line("🔍 Processing files from current commit...");
-            $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $currentCommitHash . '~1');
-        } else if ($lastProcessedCommit !== $currentCommitHash) {
-            $this->line("🔍 Processing files changed since last run...");
-            $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $lastProcessedCommit);
+            $this->line("🔍 First run detected - processing all commits in Git history...");
+            $changedFiles = $this->getAllChangedFilesFromHistory($watchPaths);
+
+            $currentCommitHash = array_values($currentCommit)[0];
+            $this->memory->setLastProcessedCommit($currentCommitHash);
         } else {
-            $this->line("📭 No new commits since last run.");
-            return [];
+            // Pro další spuštění potřebujeme Git
+            if (empty($currentCommit)) {
+                $this->line("📭 No Git commits available for change detection.");
+                return [];
+            }
+
+            $currentCommitHash = array_values($currentCommit)[0];
+
+            if ($this->option('force')) {
+                $this->line("🔍 Force mode - processing files from current commit...");
+                $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $currentCommitHash . '~1');
+            } else if ($lastProcessedCommit !== $currentCommitHash) {
+                $this->line("🔍 Processing files changed since last run...");
+                $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $lastProcessedCommit);
+            } else {
+                // Zkontroluj jestli jsou nějaké soubory, které selhaly při předchozím zpracování
+                $failedFiles = $this->getFailedFiles($watchPaths);
+                if (!empty($failedFiles)) {
+                    $this->line("🔄 Retrying " . count($failedFiles) . " files that failed in previous runs...");
+                    $changedFiles = $failedFiles;
+                } else {
+                    $this->line("📭 No new commits since last run.");
+                    return [];
+                }
+            }
+
+            // Uložit aktuální commit jako zpracovaný
+            $this->memory->setLastProcessedCommit($currentCommitHash);
         }
 
-        // Filtruj soubory podle konfigurace
-        $filteredFiles = $this->filterChangedFiles($changedFiles, $watchPaths);
-
-        // Uložit aktuální commit jako zpracovaný
-        $this->memory->setLastProcessedCommit($currentCommitHash);
+        // Filtruj soubory podle konfigurace (pouze pokud nejsou už předfiltrované)
+        if (!$hasDocumentedFiles) {
+            // Pro první spuštění už máme správné soubory
+            $filteredFiles = $changedFiles;
+        } else {
+            // Pro ostatní případy filtruj podle konfigurace
+            $filteredFiles = $this->filterChangedFiles($changedFiles, $watchPaths);
+        }
 
         return $filteredFiles;
+    }
+
+    /**
+     * Získá všechny soubory změněné v celé Git historii (pro první spuštění)
+     */
+    private function getAllChangedFilesFromHistory(array $watchPaths): array
+    {
+        if (!$this->gitWatcher->isGitAvailable()) {
+            return [];
+        }
+
+        try {
+            // Získej všechny PHP soubory změněné v celé historii
+            $allChangedFiles = $this->gitWatcher->getAllChangedFilesInHistory();
+
+            // Filtruj podle sledovaných cest a PHP rozšíření
+            $filteredFiles = $this->filterChangedFiles($allChangedFiles, $watchPaths);
+
+            $this->line("📊 Found " . count($filteredFiles) . " PHP files changed in Git history");
+
+            return $filteredFiles;
+        } catch (\Exception $e) {
+            $this->error("❌ Error getting files from Git history: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Získá soubory, které selhaly při předchozím zpracování
+     */
+    private function getFailedFiles(array $watchPaths): array
+    {
+        if (!$this->gitWatcher->isGitAvailable()) {
+            return [];
+        }
+
+        try {
+            // Získej všechny soubory z historie
+            $allHistoryFiles = $this->gitWatcher->getAllChangedFilesInHistory();
+            $filteredHistoryFiles = $this->filterChangedFiles($allHistoryFiles, $watchPaths);
+
+            // Získej soubory, které už byly zpracovány
+            $documentedFiles = $this->memory->getDocumentedFiles();
+
+            // Najdi soubory, které jsou v historii, ale nejsou zpracované
+            $failedFiles = [];
+            foreach ($filteredHistoryFiles as $file) {
+                if (!in_array($file, $documentedFiles)) {
+                    $failedFiles[] = $file;
+                }
+            }
+
+            return $failedFiles;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Získá všechny PHP soubory v sledovaných cestách (fallback metoda)
+     */
+    private function getAllPhpFilesInWatchPaths(array $watchPaths): array
+    {
+        $allFiles = [];
+
+        foreach ($watchPaths as $watchPath) {
+            $fullPath = base_path($watchPath);
+
+            if (!is_dir($fullPath)) {
+                continue;
+            }
+
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($fullPath, \RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+
+            foreach ($iterator as $file) {
+                if ($file->isFile() && $this->isValidPhpFile($file->getPathname())) {
+                    // Převeď na relativní cestu
+                    $relativePath = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $file->getPathname());
+                    $relativePath = str_replace('\\', '/', $relativePath);
+                    $allFiles[] = $relativePath;
+                }
+            }
+        }
+
+        return $allFiles;
     }
 
     /**
