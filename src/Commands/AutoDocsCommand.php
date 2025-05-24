@@ -8,6 +8,7 @@ use Digihood\Digidocs\Services\MemoryService;
 use Digihood\Digidocs\Agent\DocumentationAgent;
 use Digihood\Digidocs\Agent\ChangeAnalysisAgent;
 use Digihood\Digidocs\Services\GitWatcherService;
+use Digihood\Digidocs\Services\CostTracker;
 use Exception;
 
 class AutoDocsCommand extends Command
@@ -16,6 +17,7 @@ class AutoDocsCommand extends Command
                                     {--dry-run : Show what would be processed without generating documentation}
                                     {--cleanup : Clean up memory database from non-existent files}
                                     {--stats : Show documentation statistics}
+                                    {--cost : Show token usage and cost statistics}
                                     {--path=* : Specific paths to process}';
 
     protected $description = 'Generate documentation using AI agent for PHP files changed in Git commits';
@@ -24,18 +26,28 @@ class AutoDocsCommand extends Command
         private MemoryService $memory,
         private DocumentationAgent $agent,
         private ChangeAnalysisAgent $changeAgent,
-        private GitWatcherService $gitWatcher
+        private GitWatcherService $gitWatcher,
+        private CostTracker $costTracker
     ) {
         parent::__construct();
+
+        // Nastaví cost tracking pro agenty
+        $this->agent->setCostTracker($this->costTracker);
+        $this->changeAgent->setCostTracker($this->costTracker);
     }
 
     public function handle(): int
     {
-        $this->info('🤖 AutoDocs AI Agent v1.2.0 - Starting...');
+        $this->info('🤖 AutoDocs AI Agent - Starting...');
 
         // Statistiky
         if ($this->option('stats')) {
             return $this->showStats();
+        }
+
+        // Statistiky nákladů
+        if ($this->option('cost')) {
+            return $this->showCostStats();
         }
 
         // Cleanup
@@ -443,6 +455,74 @@ class AutoDocsCommand extends Command
         $deleted = $this->memory->cleanup();
 
         $this->line("Removed {$deleted} records for non-existent files");
+
+        return 0;
+    }
+
+    /**
+     * Zobrazí statistiky nákladů a tokenů
+     */
+    private function showCostStats(): int
+    {
+        $stats = $this->memory->getCostStats();
+
+        $this->info('💰 AutoDocs Cost & Token Statistics');
+        $this->newLine();
+
+        // Celkové statistiky
+        $this->info('📊 Overall Statistics');
+        $this->line("Total API calls: {$stats['total_calls']}");
+        $this->line("Total input tokens: " . number_format($stats['total_input_tokens']));
+        $this->line("Total output tokens: " . number_format($stats['total_output_tokens']));
+        $this->line("Total tokens: " . number_format($stats['total_tokens']));
+        $this->line("Total cost: $" . number_format($stats['total_cost'], 4));
+
+        // Statistiky podle modelů
+        if (!empty($stats['by_model'])) {
+            $this->newLine();
+            $this->info('🤖 Statistics by Model');
+            foreach ($stats['by_model'] as $model => $modelStats) {
+                $pricingSource = $this->costTracker->getPricingSource($model);
+                $sourceIcon = match($pricingSource) {
+                    'config' => '⚙️',
+                    default => '📋'
+                };
+
+                $this->line("  {$model} {$sourceIcon}:");
+                $this->line("    Calls: {$modelStats['calls']}");
+                $this->line("    Input tokens: " . number_format($modelStats['input_tokens']));
+                $this->line("    Output tokens: " . number_format($modelStats['output_tokens']));
+                $this->line("    Cost: $" . number_format($modelStats['cost'], 4));
+                $this->line("    Pricing source: {$pricingSource}");
+            }
+        }
+
+        // Nedávná aktivita
+        if (!empty($stats['recent_activity'])) {
+            $this->newLine();
+            $this->info('📅 Recent Activity (Last 7 days)');
+            $this->line("API calls: {$stats['recent_activity']['calls']}");
+            $this->line("Tokens used: " . number_format($stats['recent_activity']['tokens']));
+            $this->line("Cost: $" . number_format($stats['recent_activity']['cost'], 4));
+        }
+
+        // Zobrazit aktuální ceny pro použité modely
+        if (!empty($stats['by_model'])) {
+            $this->newLine();
+            $this->info('💰 Current Model Rates (per 1M tokens)');
+            foreach (array_keys($stats['by_model']) as $model) {
+                $rates = $this->costTracker->getModelRates($model);
+                $source = $this->costTracker->getPricingSource($model);
+                $sourceIcon = match($source) {
+                    'config' => '⚙️',
+                    default => '📋'
+                };
+
+                $this->line("  {$model} {$sourceIcon}:");
+                $this->line("    Input: $" . number_format($rates['input'], 2) . " / 1M tokens");
+                $this->line("    Output: $" . number_format($rates['output'], 2) . " / 1M tokens");
+            }
+        }
 
         return 0;
     }

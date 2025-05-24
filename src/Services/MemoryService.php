@@ -172,6 +172,125 @@ class MemoryService
     }
 
     /**
+     * Získá statistiky nákladů a tokenů
+     */
+    public function getCostStats(): array
+    {
+        try {
+            // Základní statistiky
+            $stmt = $this->db->query("
+                SELECT
+                    COUNT(*) as total_calls,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    SUM(cost) as total_cost
+                FROM token_usage
+            ");
+
+            $basicStats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [
+                'total_calls' => 0,
+                'total_input_tokens' => 0,
+                'total_output_tokens' => 0,
+                'total_tokens' => 0,
+                'total_cost' => 0.0
+            ];
+
+            // Statistiky podle modelů
+            $stmt = $this->db->query("
+                SELECT
+                    model,
+                    COUNT(*) as calls,
+                    SUM(input_tokens) as input_tokens,
+                    SUM(output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    SUM(cost) as cost
+                FROM token_usage
+                GROUP BY model
+                ORDER BY cost DESC
+            ");
+
+            $byModel = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $byModel[$row['model']] = [
+                    'calls' => (int) $row['calls'],
+                    'input_tokens' => (int) $row['input_tokens'],
+                    'output_tokens' => (int) $row['output_tokens'],
+                    'total_tokens' => (int) $row['total_tokens'],
+                    'cost' => (float) $row['cost']
+                ];
+            }
+
+            // Nedávná aktivita (posledních 7 dní)
+            $stmt = $this->db->query("
+                SELECT
+                    COUNT(*) as calls,
+                    SUM(total_tokens) as tokens,
+                    SUM(cost) as cost
+                FROM token_usage
+                WHERE datetime(created_at) > datetime('now', '-7 days')
+            ");
+
+            $recentActivity = $stmt->fetch(PDO::FETCH_ASSOC) ?: [
+                'calls' => 0,
+                'tokens' => 0,
+                'cost' => 0.0
+            ];
+
+            return [
+                'total_calls' => (int) $basicStats['total_calls'],
+                'total_input_tokens' => (int) $basicStats['total_input_tokens'],
+                'total_output_tokens' => (int) $basicStats['total_output_tokens'],
+                'total_tokens' => (int) $basicStats['total_tokens'],
+                'total_cost' => (float) $basicStats['total_cost'],
+                'by_model' => $byModel,
+                'recent_activity' => [
+                    'calls' => (int) $recentActivity['calls'],
+                    'tokens' => (int) $recentActivity['tokens'],
+                    'cost' => (float) $recentActivity['cost']
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            return [
+                'total_calls' => 0,
+                'total_input_tokens' => 0,
+                'total_output_tokens' => 0,
+                'total_tokens' => 0,
+                'total_cost' => 0.0,
+                'by_model' => [],
+                'recent_activity' => ['calls' => 0, 'tokens' => 0, 'cost' => 0.0],
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Zaznamenej použití tokenů
+     */
+    public function recordTokenUsage(string $model, int $inputTokens, int $outputTokens, float $cost, ?string $filePath = null): void
+    {
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO token_usage
+                (model, input_tokens, output_tokens, total_tokens, cost, file_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ");
+
+            $stmt->execute([
+                $model,
+                $inputTokens,
+                $outputTokens,
+                $inputTokens + $outputTokens,
+                $cost,
+                $filePath
+            ]);
+        } catch (\Exception $e) {
+            \Log::warning("Failed to record token usage: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Získá statistiky inteligentní analýzy
      */
     public function getAnalysisStats(): array
@@ -374,6 +493,35 @@ class MemoryService
                 ON documented_code_parts(last_updated_at)
             ");
 
+            // Tabulka pro sledování tokenů a nákladů
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    total_tokens INTEGER NOT NULL,
+                    cost REAL NOT NULL,
+                    file_path TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_token_usage_created_at
+                ON token_usage(created_at)
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_token_usage_model
+                ON token_usage(model)
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_token_usage_file_path
+                ON token_usage(file_path)
+            ");
+
         } catch (PDOException $e) {
             throw new \RuntimeException("Nelze vytvořit AutoDocs databázi: " . $e->getMessage());
         }
@@ -480,6 +628,40 @@ class MemoryService
                 $this->db->exec("
                     CREATE INDEX idx_documented_code_parts_updated_at
                     ON documented_code_parts(last_updated_at)
+                ");
+            }
+
+            // Zkontroluj a vytvoř token_usage tabulku
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE token_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        model TEXT NOT NULL,
+                        input_tokens INTEGER NOT NULL,
+                        output_tokens INTEGER NOT NULL,
+                        total_tokens INTEGER NOT NULL,
+                        cost REAL NOT NULL,
+                        file_path TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_token_usage_created_at
+                    ON token_usage(created_at)
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_token_usage_model
+                    ON token_usage(model)
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_token_usage_file_path
+                    ON token_usage(file_path)
                 ");
             }
         } catch (PDOException $e) {

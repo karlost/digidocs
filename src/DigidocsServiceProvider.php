@@ -19,6 +19,11 @@ class DigidocsServiceProvider extends ServiceProvider
             'digidocs'
         );
 
+        $this->mergeConfigFrom(
+            __DIR__.'/../config/pricing.php',
+            'digidocs.pricing'
+        );
+
         // Registrace služeb
         $this->app->singleton(MemoryService::class, function ($app) {
             return new MemoryService();
@@ -30,6 +35,10 @@ class DigidocsServiceProvider extends ServiceProvider
 
         $this->app->singleton(Services\GitWatcherService::class, function ($app) {
             return new Services\GitWatcherService();
+        });
+
+        $this->app->singleton(Services\CostTracker::class, function ($app) {
+            return new Services\CostTracker($app->make(MemoryService::class));
         });
     }
 
@@ -46,9 +55,10 @@ class DigidocsServiceProvider extends ServiceProvider
             ]);
         }
 
-        // Publikace konfiguračního souboru
+        // Publikace konfiguračních souborů
         $this->publishes([
             __DIR__.'/../config/digidocs.php' => config_path('digidocs.php'),
+            __DIR__.'/../config/pricing.php' => config_path('digidocs/pricing.php'),
         ], 'digidocs-config');
 
         // Publikace views

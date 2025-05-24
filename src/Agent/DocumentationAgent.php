@@ -9,9 +9,12 @@ use NeuronAI\Providers\OpenAI\OpenAI;
 use Digihood\Digidocs\Tools\GitAnalyzerTool;
 use Digihood\Digidocs\Tools\CodeAnalyzerTool;
 use Digihood\Digidocs\Tools\FileHashTool;
+use Digihood\Digidocs\Services\CostTracker;
 
 class DocumentationAgent extends Agent
 {
+    private ?CostTracker $costTracker = null;
+
     protected function provider(): AIProviderInterface
     {
         return new OpenAI(
@@ -19,7 +22,17 @@ class DocumentationAgent extends Agent
             model: config('digidocs.ai.model', 'gpt-4'),
         );
     }
-    
+
+    /**
+     * Nastaví cost tracker pro sledování tokenů
+     */
+    public function setCostTracker(CostTracker $costTracker): self
+    {
+        $this->costTracker = $costTracker;
+        $this->observe($costTracker);
+        return $this;
+    }
+
     public function instructions(): string
     {
         return new SystemPrompt(
@@ -56,7 +69,7 @@ class DocumentationAgent extends Agent
             ]
         );
     }
-    
+
     protected function tools(): array
     {
         return [
@@ -71,12 +84,22 @@ class DocumentationAgent extends Agent
      */
     public function generateDocumentationForFile(string $filePath): string
     {
+        // Nastaví aktuální soubor pro cost tracking
+        if ($this->costTracker) {
+            $this->costTracker->setCurrentFile($filePath);
+        }
+
         $prompt = $this->buildPromptForFile($filePath);
-        
+
         $response = $this->chat(
             new \NeuronAI\Chat\Messages\UserMessage($prompt)
         );
-        
+
+        // Resetuj aktuální soubor
+        if ($this->costTracker) {
+            $this->costTracker->setCurrentFile(null);
+        }
+
         return $response->getContent();
     }
 
@@ -106,7 +129,7 @@ Dokumentace by měla být užitečná pro vývojáře, kteří budou tento kód 
     public function generateSummaryDocumentation(array $filePaths): string
     {
         $filesList = implode("\n- ", $filePaths);
-        
+
         $prompt = "Prosím vygeneruj souhrnnou dokumentaci pro následující PHP soubory:
 - {$filesList}
 
@@ -121,7 +144,7 @@ Dokumentace by měla sloužit jako úvod do této části kódové základny.";
         $response = $this->chat(
             new \NeuronAI\Chat\Messages\UserMessage($prompt)
         );
-        
+
         return $response->getContent();
     }
 }

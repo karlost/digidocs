@@ -70,6 +70,9 @@ php artisan digidocs:autodocs --path=app/Models --path=app/Services
 # Zobraz statistiky dokumentace a inteligentní analýzy
 php artisan digidocs:autodocs --stats
 
+# Zobraz statistiky nákladů a tokenů
+php artisan digidocs:autodocs --cost
+
 # Vyčisti databázi od neexistujících souborů
 php artisan digidocs:autodocs --cleanup
 ```
@@ -98,7 +101,24 @@ php artisan digidocs:watch --path=app/Models --path=app/Services
 - **`autodocs`** - Jednorázové spuštění, zpracuje Git commity od posledního spuštění
 - **`watch`** - Kontinuální sledování, automaticky zpracovává nové Git commity
 
-## 🐛 Troubleshooting
+**Výstup obsahuje:**
+- 📊 **Celkové statistiky** - počet volání, tokeny, náklady
+- 🤖 **Statistiky podle modelů** - detaily pro každý použitý AI model
+- 📅 **Nedávná aktivita** - spotřeba za posledních 7 dní
+- 💰 **Aktuální ceny** - ceny modelů per 1M tokenů
+
+**Podporované AI providery:**
+- ✅ **OpenAI** - GPT-4.1, GPT-4o, GPT-4, GPT-3.5, O3, O4-mini
+- ✅ **Anthropic** - Claude 4, Claude 3.7, Claude 3.5, Claude 3
+- ✅ **Gemini** - Gemini 1.5 Pro/Flash, Gemini 2.0 Flash
+- ✅ **Deepseek** - Deepseek Chat/Coder
+- ✅ **Mistral** - Mistral Large/Medium/Small
+- ✅ **Ollama** - Lokální modely (zdarma)
+
+**Konfigurace cen:**
+Ceny modelů jsou konfigurovatelné v `config/digidocs/pricing.php` a automaticky se aktualizují podle oficiálních cen providerů.
+
+## �🐛 Troubleshooting
 
 ### Základní problémy
 ```bash

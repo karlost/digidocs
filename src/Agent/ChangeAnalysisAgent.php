@@ -10,11 +10,13 @@ use Digihood\Digidocs\Tools\CodeDiffTool;
 use Digihood\Digidocs\Tools\AstCompareTool;
 use Digihood\Digidocs\Tools\SemanticAnalysisTool;
 use Digihood\Digidocs\Services\DocumentationAnalyzer;
+use Digihood\Digidocs\Services\CostTracker;
 use Exception;
 
 class ChangeAnalysisAgent extends Agent
 {
     private ?DocumentationAnalyzer $documentationAnalyzer = null;
+    private ?CostTracker $costTracker = null;
 
     private function getDocumentationAnalyzer(): DocumentationAnalyzer
     {
@@ -22,6 +24,16 @@ class ChangeAnalysisAgent extends Agent
             $this->documentationAnalyzer = new DocumentationAnalyzer();
         }
         return $this->documentationAnalyzer;
+    }
+
+    /**
+     * Nastaví cost tracker pro sledování tokenů
+     */
+    public function setCostTracker(CostTracker $costTracker): self
+    {
+        $this->costTracker = $costTracker;
+        $this->observe($costTracker);
+        return $this;
     }
 
     protected function provider(): AIProviderInterface
