@@ -68,6 +68,34 @@ php artisan autodocs --stats
 php artisan autodocs --cleanup
 ```
 
+### 🔍 Watch Mode - Automatické sledování Git commitů
+
+```bash
+# Spusť watch mode - sleduje Git commity
+php artisan autodocs:watch
+
+# Nastav interval kontroly (výchozí 5 sekund)
+php artisan autodocs:watch --interval=10
+
+# Sleduj konkrétní cesty
+php artisan autodocs:watch --path=app/Models --path=app/Services
+```
+
+**Watch mode automaticky:**
+- 🔄 Sleduje Git commity v real-time
+- 📁 Detekuje změněné PHP soubory v commitu
+- 🎯 Filtruje pouze soubory v sledovaných cestách
+- 🤖 Automaticky generuje dokumentaci pro změněné soubory
+- 💾 Ukládá stav do SQLite databáze pro optimalizaci
+- ⚡ Přeskakuje nezměněné soubory
+- 🛑 Graceful shutdown pomocí Ctrl+C
+
+**Workflow:**
+1. Uděláte změny v kódu
+2. Commitnete změny: `git commit -m "feat: nová funkcionalita"`
+3. Watch mode automaticky detekuje nový commit
+4. Vygeneruje dokumentaci pouze pro změněné PHP soubory
+
 ## 🏗️ Architektura
 
 Package využívá **NeuronAI** framework s následující strukturou:

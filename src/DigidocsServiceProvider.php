@@ -27,6 +27,10 @@ class DigidocsServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentationAgent::class, function ($app) {
             return new DocumentationAgent();
         });
+
+        $this->app->singleton(Services\GitWatcherService::class, function ($app) {
+            return new Services\GitWatcherService();
+        });
     }
 
     /**
@@ -38,6 +42,7 @@ class DigidocsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 AutoDocsCommand::class,
+                Commands\WatchCommand::class,
             ]);
         }
 
