@@ -79,4 +79,21 @@ return [
         'files_only' => env('AUTODOCS_WATCH_FILES_ONLY', false),
         'auto_commit_hook' => env('AUTODOCS_AUTO_COMMIT_HOOK', false),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Intelligent Analysis Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Nastavení pro inteligentní analýzu změn a rozhodování o regeneraci dokumentace
+    |
+    */
+    'intelligent_analysis' => [
+        'enabled' => env('AUTODOCS_INTELLIGENT_ANALYSIS', true),
+        'fallback_to_classic' => env('AUTODOCS_FALLBACK_TO_CLASSIC', true),
+        'track_documented_parts' => env('AUTODOCS_TRACK_DOCUMENTED_PARTS', true),
+        'min_confidence_threshold' => env('AUTODOCS_MIN_CONFIDENCE', 0.7),
+        'skip_private_changes' => env('AUTODOCS_SKIP_PRIVATE_CHANGES', true),
+        'force_regenerate_on_public_api_changes' => env('AUTODOCS_FORCE_PUBLIC_API', true),
+    ],
 ];

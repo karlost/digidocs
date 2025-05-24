@@ -6,12 +6,13 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Digihood\Digidocs\Services\MemoryService;
 use Digihood\Digidocs\Agent\DocumentationAgent;
+use Digihood\Digidocs\Agent\ChangeAnalysisAgent;
 use Digihood\Digidocs\Services\GitWatcherService;
 use Exception;
 
 class WatchCommand extends Command
 {
-    protected $signature = 'autodocs:watch {--interval=5 : Check interval in seconds}
+    protected $signature = 'digidocs:watch {--interval=5 : Check interval in seconds}
                                           {--path=* : Specific paths to watch}';
 
     protected $description = 'Watch for Git commits and automatically generate documentation for changed files';
@@ -22,6 +23,7 @@ class WatchCommand extends Command
     public function __construct(
         private MemoryService $memory,
         private DocumentationAgent $agent,
+        private ChangeAnalysisAgent $changeAnalysisAgent,
         private GitWatcherService $gitWatcher
     ) {
         parent::__construct();
@@ -210,27 +212,25 @@ class WatchCommand extends Command
             try {
                 $this->line("📄 Processing: {$filePath}");
 
-                // Zkontroluj jestli soubor potřebuje dokumentaci
-                $status = $this->memory->needsDocumentation($filePath);
+                // Použij ChangeAnalysisAgent pro inteligentní rozhodování
+                $documentation = $this->changeAnalysisAgent->generateDocumentationIfNeeded($filePath);
 
-                if ($status['needs_update']) {
-                    // Generuj dokumentaci
-                    $documentation = $this->agent->generateDocumentationForFile($filePath);
-
+                if ($documentation !== null) {
                     // Ulož dokumentaci
                     $docPath = $this->saveDocumentation($filePath, $documentation);
 
                     // Zaznamenej do memory
+                    $currentHash = hash_file('sha256', base_path($filePath));
                     $this->memory->recordDocumentation(
                         $filePath,
-                        $status['current_hash'],
+                        $currentHash,
                         $docPath
                     );
 
                     $this->line("   ✅ Generated: {$docPath}");
                     $processed++;
                 } else {
-                    $this->line("   ⏭️  Skipped (up to date)");
+                    $this->line("   ⏭️  Skipped (no significant changes)");
                 }
 
             } catch (Exception $e) {

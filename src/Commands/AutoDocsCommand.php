@@ -6,12 +6,13 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Digihood\Digidocs\Services\MemoryService;
 use Digihood\Digidocs\Agent\DocumentationAgent;
+use Digihood\Digidocs\Agent\ChangeAnalysisAgent;
 use Digihood\Digidocs\Services\GitWatcherService;
 use Exception;
 
 class AutoDocsCommand extends Command
 {
-    protected $signature = 'autodocs {--force : Force regeneration of all documentation}
+    protected $signature = 'digidocs:autodocs {--force : Force regeneration of all documentation}
                                     {--dry-run : Show what would be processed without generating documentation}
                                     {--cleanup : Clean up memory database from non-existent files}
                                     {--stats : Show documentation statistics}
@@ -22,6 +23,7 @@ class AutoDocsCommand extends Command
     public function __construct(
         private MemoryService $memory,
         private DocumentationAgent $agent,
+        private ChangeAnalysisAgent $changeAgent,
         private GitWatcherService $gitWatcher
     ) {
         parent::__construct();
@@ -97,35 +99,32 @@ class AutoDocsCommand extends Command
             $relativePath = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $filePath);
             $relativePath = str_replace('\\', '/', $relativePath);
 
-            $status = $this->memory->needsDocumentation($relativePath);
-
-            if (isset($status['error'])) {
-                $this->line("   ❌ Error: {$status['error']}");
-                return 'error';
-            }
-
-            if (!$this->option('force') && !$status['needs_update']) {
-                $this->line("   ⏭️  Skipped (up to date)");
-                return 'skipped';
-            }
-
             if ($this->option('dry-run')) {
-                $this->line("   🔍 Would process with AI agent");
+                $this->line("   🔍 Would process with ChangeAnalysisAgent");
                 return 'processed';
             }
 
-            // Generuj dokumentaci
-            $documentation = $this->generateDocumentation($relativePath);
+            // Použij ChangeAnalysisAgent pro inteligentní rozhodování
+            $documentation = $this->changeAgent->generateDocumentationIfNeeded($relativePath);
+
+            if ($documentation === null) {
+                $this->line("   ⏭️  Skipped (no significant changes)");
+                return 'skipped';
+            }
 
             // Ulož dokumentaci
             $docPath = $this->saveDocumentation($relativePath, $documentation);
 
             // Zaznamenej do memory
+            $currentHash = hash_file('sha256', base_path($relativePath));
             $this->memory->recordDocumentation(
                 $relativePath,
-                $status['current_hash'],
+                $currentHash,
                 $docPath
             );
+
+            // NOVÉ: Zaznamenej dokumentované části kódu
+            $this->recordDocumentedCodeParts($relativePath, $documentation);
 
             $this->line("   ✅ Generated: {$docPath}");
             return 'processed';
@@ -133,20 +132,6 @@ class AutoDocsCommand extends Command
         } catch (Exception $e) {
             $this->line("   ❌ Failed: " . $e->getMessage());
             return 'error';
-        }
-    }
-
-    /**
-     * Vygeneruje dokumentaci pomocí AI agenta
-     */
-    private function generateDocumentation(string $filePath): string
-    {
-        $this->line("   🧠 Generating with AI...");
-
-        try {
-            return $this->agent->generateDocumentationForFile($filePath);
-        } catch (Exception $e) {
-            throw new Exception("AI generation failed: " . $e->getMessage());
         }
     }
 
@@ -171,6 +156,147 @@ class AutoDocsCommand extends Command
         File::put($docPath, $documentation);
 
         return str_replace(base_path() . '/', '', $docPath);
+    }
+
+    /**
+     * Zaznamenej dokumentované části kódu
+     */
+    private function recordDocumentedCodeParts(string $filePath, string $documentation): void
+    {
+        try {
+            // Parsuj současný kód pro získání struktury
+            $documentationAnalyzer = new \Digihood\Digidocs\Services\DocumentationAnalyzer();
+            $currentContent = file_get_contents(base_path($filePath));
+
+            if (!$currentContent) {
+                return;
+            }
+
+            $codeStructure = $documentationAnalyzer->parseCodeStructure($currentContent);
+            $codeParts = [];
+
+            // Extrahuj třídy
+            foreach ($codeStructure['classes'] ?? [] as $class) {
+                $codeParts[] = [
+                    'type' => 'class',
+                    'name' => $class['name'],
+                    'signature' => $this->buildClassSignature($class),
+                    'section' => 'Classes'
+                ];
+
+                // Extrahuj veřejné metody
+                foreach ($class['methods'] ?? [] as $method) {
+                    if (($method['visibility'] ?? 'public') === 'public') {
+                        $codeParts[] = [
+                            'type' => 'method',
+                            'name' => $class['name'] . '::' . $method['name'],
+                            'signature' => $this->buildMethodSignature($method),
+                            'section' => 'Methods'
+                        ];
+                    }
+                }
+
+                // Extrahuj veřejné vlastnosti
+                foreach ($class['properties'] ?? [] as $property) {
+                    if (($property['visibility'] ?? 'public') === 'public') {
+                        $codeParts[] = [
+                            'type' => 'property',
+                            'name' => $class['name'] . '::$' . $property['name'],
+                            'signature' => $property['visibility'] . ' $' . $property['name'],
+                            'section' => 'Properties'
+                        ];
+                    }
+                }
+            }
+
+            // Extrahuj funkce
+            foreach ($codeStructure['functions'] ?? [] as $function) {
+                $codeParts[] = [
+                    'type' => 'function',
+                    'name' => $function['name'],
+                    'signature' => $this->buildFunctionSignature($function),
+                    'section' => 'Functions'
+                ];
+            }
+
+            // Zaznamenej do databáze
+            $this->memory->recordDocumentedCodeParts($filePath, $codeParts);
+
+        } catch (\Exception $e) {
+            \Log::warning("Failed to record documented code parts for {$filePath}: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Vytvoř signaturu třídy
+     */
+    private function buildClassSignature(array $class): string
+    {
+        $signature = 'class ' . $class['name'];
+
+        if (!empty($class['extends'])) {
+            $signature .= ' extends ' . $class['extends'];
+        }
+
+        if (!empty($class['implements'])) {
+            $signature .= ' implements ' . implode(', ', $class['implements']);
+        }
+
+        return $signature;
+    }
+
+    /**
+     * Vytvoř signaturu metody
+     */
+    private function buildMethodSignature(array $method): string
+    {
+        $params = [];
+        foreach ($method['parameters'] ?? [] as $param) {
+            $paramStr = '';
+            if ($param['type']) {
+                $paramStr .= $param['type'] . ' ';
+            }
+            $paramStr .= '$' . $param['name'];
+            if ($param['default']) {
+                $paramStr .= ' = ...';
+            }
+            $params[] = $paramStr;
+        }
+
+        $signature = ($method['visibility'] ?? 'public') . ' function ' . $method['name'] . '(' . implode(', ', $params) . ')';
+
+        if ($method['return_type']) {
+            $signature .= ': ' . $method['return_type'];
+        }
+
+        return $signature;
+    }
+
+    /**
+     * Vytvoř signaturu funkce
+     */
+    private function buildFunctionSignature(array $function): string
+    {
+        $params = [];
+        foreach ($function['parameters'] ?? [] as $param) {
+            $paramStr = '';
+            if ($param['type']) {
+                $paramStr .= $param['type'] . ' ';
+            }
+            $paramStr .= '$' . $param['name'];
+            if ($param['default']) {
+                $paramStr .= ' = ...';
+            }
+            $params[] = $paramStr;
+        }
+
+        $signature = 'function ' . $function['name'] . '(' . implode(', ', $params) . ')';
+
+        if ($function['return_type']) {
+            $signature .= ': ' . $function['return_type'];
+        }
+
+        return $signature;
     }
 
     /**
@@ -287,6 +413,22 @@ class AutoDocsCommand extends Command
         $this->info('📊 AutoDocs Statistics');
         $this->line("Total documented files: {$stats['total_files']}");
         $this->line("Files updated in last 7 days: {$stats['recent_updates']}");
+
+        // Statistiky inteligentní analýzy
+        if (isset($stats['analysis_enabled']) && $stats['analysis_enabled']) {
+            $this->newLine();
+            $this->info('🧠 Intelligent Analysis Statistics');
+            $this->line("Total analyses performed: {$stats['total_analyses']}");
+            $this->line("Documentation regenerations recommended: {$stats['regeneration_recommended']}");
+            $this->line("Documentation regenerations skipped: {$stats['regeneration_skipped']}");
+            $this->line("Skip rate: {$stats['skip_rate']}%");
+            $this->line("Average confidence: {$stats['avg_confidence']}");
+            $this->line("Average semantic score: {$stats['avg_semantic_score']}");
+            $this->line("Recent analyses (24h): {$stats['recent_analyses']}");
+        } else {
+            $this->newLine();
+            $this->comment('🤖 Intelligent analysis is disabled');
+        }
 
         return 0;
     }
