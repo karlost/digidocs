@@ -1,12 +1,14 @@
 {
-    "name": "digihood/digidocs",
-    "description": "Laravel package for document management",
+    "name": "karlost/digidocs",
+    "description": "AI-powered Laravel documentation generator with NeuronAI integration",
     "type": "library",
     "license": "MIT",
+    "keywords": ["laravel", "documentation", "ai", "neuronai", "php", "generator"],
+    "homepage": "https://github.com/karlost/digidocs",
     "authors": [
         {
-            "name": "digihood",
-            "email": "info@digihood.com"
+            "name": "karlost",
+            "email": "karlost@example.com"
         }
     ],
     "require": {

@@ -13,8 +13,16 @@ Digidocs je pokročilý Laravel package pro automatické generování dokumentac
 
 ## 🚀 Instalace
 
+### Z GitHubu (doporučeno)
+
 ```bash
-composer require digihood/digidocs
+composer require karlost/digidocs:dev-main
+```
+
+### Nebo s konkrétním tagem
+
+```bash
+composer require karlost/digidocs:^1.0
 ```
 
 ## ⚙️ Konfigurace
