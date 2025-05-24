@@ -1,15 +1,23 @@
 # Digidocs - AI-Powered Laravel Documentation Generator
 
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/karlost/digidocs)
+[![Laravel](https://img.shields.io/badge/Laravel-10%2B-red.svg)](https://laravel.com)
+[![PHP](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://php.net)
+
 Digidocs je pokročilý Laravel package pro automatické generování dokumentace PHP kódu pomocí umělé inteligence s využitím NeuronAI frameworku.
+
+> **🆕 Verze 1.2.0** - Nový Git commit monitoring! AutoDocs nyní automaticky sleduje Git commity a zpracovává pouze změněné soubory místo celého projektu.
 
 ## ✨ Funkce
 
 - 🤖 **AI-powered dokumentace** - Využívá OpenAI/GPT-4 pro generování kvalitní dokumentace
+- 🔄 **Git commit monitoring** - Automatické sledování Git commitů a generování dokumentace pouze pro změněné soubory
 - 📊 **Inteligentní analýza** - PHP AST parsing a Git analýza změn
-- 💾 **SQLite memory** - Tracking změn souborů pro efektivní regeneraci
+- 💾 **SQLite memory** - Tracking změn souborů a commitů pro efektivní regeneraci
 - 🛠️ **NeuronAI Tools** - Modulární architektura s Tools a Agents
 - 🔍 **Laravel kontext** - Rozpoznává Controllers, Models, Commands, atd.
 - ⚡ **Artisan commands** - Snadné použití přes CLI
+- 🎯 **Efektivní zpracování** - Zpracovává pouze změněné soubory místo celého projektu
 
 ## 🚀 Instalace
 
@@ -42,20 +50,44 @@ AUTODOCS_AI_MODEL=gpt-4
 
 ## 📋 Použití
 
-### Základní generování dokumentace
+### 🔄 Git Commit Monitoring (Výchozí režim)
+
+**Nový výchozí režim** - AutoDocs nyní automaticky sleduje Git commity a zpracovává pouze změněné soubory:
 
 ```bash
-# Vygeneruje dokumentaci pro všechny PHP soubory v app/
+# Zpracuje pouze soubory změněné v Git commitech od posledního spuštění
 php artisan autodocs
 
-# Force regenerace všech souborů
+# Force regenerace i pro Git změny
 php artisan autodocs --force
 
-# Dry run - ukáže co by se zpracovalo
+# Dry run - ukáže co by se zpracovalo z Git změn
 php artisan autodocs --dry-run
 
-# Zpracování konkrétních cest
+# Zpracování konkrétních cest (pouze Git změny)
 php artisan autodocs --path=app/Models --path=app/Controllers
+```
+
+**Jak to funguje:**
+1. 🔍 Detekuje nové Git commity od posledního spuštění
+2. 📁 Analyzuje změněné PHP soubory v commitech
+3. 🎯 Filtruje pouze soubory v sledovaných cestách (`app/`, `routes/`)
+4. 🤖 Generuje dokumentaci pouze pro změněné soubory
+5. 💾 Ukládá poslední zpracovaný commit do databáze
+
+### 📁 Režim všech souborů
+
+Pro zpracování všech souborů (původní chování) použijte `--all`:
+
+```bash
+# Zpracuje všechny PHP soubory v sledovaných cestách
+php artisan autodocs --all
+
+# Force regenerace všech souborů
+php artisan autodocs --all --force
+
+# Dry run pro všechny soubory
+php artisan autodocs --all --dry-run
 ```
 
 ### Správa a statistiky
@@ -68,10 +100,12 @@ php artisan autodocs --stats
 php artisan autodocs --cleanup
 ```
 
-### 🔍 Watch Mode - Automatické sledování Git commitů
+### 🔍 Watch Mode - Real-time sledování Git commitů
+
+Pro kontinuální sledování změn v real-time použijte watch mode:
 
 ```bash
-# Spusť watch mode - sleduje Git commity
+# Spusť watch mode - sleduje Git commity v real-time
 php artisan autodocs:watch
 
 # Nastav interval kontroly (výchozí 5 sekund)
@@ -82,19 +116,23 @@ php artisan autodocs:watch --path=app/Models --path=app/Services
 ```
 
 **Watch mode automaticky:**
-- 🔄 Sleduje Git commity v real-time
-- 📁 Detekuje změněné PHP soubory v commitu
+- 🔄 Sleduje Git commity v real-time (každých 5 sekund)
+- 📁 Detekuje změněné PHP soubory v nových commitech
 - 🎯 Filtruje pouze soubory v sledovaných cestách
 - 🤖 Automaticky generuje dokumentaci pro změněné soubory
 - 💾 Ukládá stav do SQLite databáze pro optimalizaci
 - ⚡ Přeskakuje nezměněné soubory
 - 🛑 Graceful shutdown pomocí Ctrl+C
 
+**Rozdíl mezi režimy:**
+- **`php artisan autodocs`** - Jednorázové spuštění, zpracuje změny od posledního spuštění
+- **`php artisan autodocs:watch`** - Kontinuální sledování, automaticky reaguje na nové commity
+
 **Workflow:**
-1. Uděláte změny v kódu
-2. Commitnete změny: `git commit -m "feat: nová funkcionalita"`
-3. Watch mode automaticky detekuje nový commit
-4. Vygeneruje dokumentaci pouze pro změněné PHP soubory
+1. Spustíte watch mode: `php artisan autodocs:watch`
+2. Uděláte změny v kódu
+3. Commitnete změny: `git commit -m "feat: nová funkcionalita"`
+4. Watch mode automaticky detekuje nový commit a vygeneruje dokumentaci
 
 ## 🏗️ Architektura
 
@@ -138,13 +176,40 @@ $documentation = $agent->generateDocumentationForFile('app/Models/User.php');
 ```
 
 ### Memory Service
-SQLite databáze pro efektivní tracking:
+SQLite databáze pro efektivní tracking souborů a Git commitů:
 
 ```php
 use Digihood\Digidocs\Services\MemoryService;
 
 $memory = app(MemoryService::class);
+
+// Tracking souborů
 $status = $memory->needsDocumentation('app/Models/User.php');
+
+// Tracking Git commitů
+$lastCommit = $memory->getLastProcessedCommit();
+$memory->setLastProcessedCommit('abc123def456');
+```
+
+### GitWatcherService
+Služba pro Git integraci a monitoring commitů:
+
+```php
+use Digihood\Digidocs\Services\GitWatcherService;
+
+$gitWatcher = app(GitWatcherService::class);
+
+// Kontrola Git dostupnosti
+if ($gitWatcher->isGitAvailable()) {
+    // Získání aktuálních commit hashů
+    $commits = $gitWatcher->getCurrentCommitHashes();
+
+    // Získání změněných souborů mezi commity
+    $changedFiles = $gitWatcher->getChangedFilesInCommit($newCommit, $oldCommit);
+
+    // Informace o posledním commitu
+    $commitInfo = $gitWatcher->getLastCommitInfo();
+}
 ```
 
 ## 📁 Konfigurace
@@ -236,6 +301,21 @@ git status
 
 # Zkontroluj přístupová práva
 ls -la .git/
+
+# Pokud Git není dostupný, použij --all režim
+php artisan autodocs --all
+```
+
+### Git commit monitoring
+```bash
+# Zkontroluj poslední zpracovaný commit
+php artisan autodocs --stats
+
+# Reset Git tracking (vymaže poslední commit z databáze)
+php artisan autodocs --cleanup
+
+# Force zpracování aktuálního commitu
+php artisan autodocs --force
 ```
 
 ### SQLite databáze
@@ -245,6 +325,44 @@ php artisan autodocs --cleanup
 
 # Zkontroluj storage oprávnění
 ls -la storage/app/
+```
+
+## 💡 Příklady použití
+
+### Typický workflow s Git monitoring
+
+```bash
+# 1. Inicializace - první spuštění zpracuje aktuální commit
+php artisan autodocs
+# Output: "🔍 Processing files from current commit..."
+
+# 2. Uděláte změny v kódu
+echo "// Nová metoda" >> app/Models/User.php
+
+# 3. Commitnete změny
+git add app/Models/User.php
+git commit -m "feat: add new method to User model"
+
+# 4. Spustíte autodocs - zpracuje pouze změněné soubory
+php artisan autodocs
+# Output: "🔍 Processing files changed since last run..."
+# Output: "📋 Found 1 PHP files to check (mode: Git changes)"
+
+# 5. Další spuštění bez změn
+php artisan autodocs
+# Output: "📭 No new commits since last run."
+```
+
+### Kombinace s watch mode
+
+```bash
+# Spustíte watch mode na pozadí
+php artisan autodocs:watch &
+
+# Pracujete na kódu...
+# Každý commit automaticky spustí generování dokumentace
+git commit -m "fix: update validation rules"
+# Watch mode automaticky detekuje a zpracuje změny
 ```
 
 ## 📊 Příklad výstupu

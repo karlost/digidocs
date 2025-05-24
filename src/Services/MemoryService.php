@@ -17,6 +17,7 @@ class MemoryService
         $this->ensureDatabase();
         $this->db = new PDO("sqlite:" . $this->dbPath);
         $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->upgradeDatabase();
     }
 
     /**
@@ -25,7 +26,7 @@ class MemoryService
     public function needsDocumentation(string $filePath): array
     {
         $fullPath = base_path($filePath);
-        
+
         if (!file_exists($fullPath)) {
             return [
                 'needs_update' => false,
@@ -37,8 +38,8 @@ class MemoryService
         $currentHash = hash_file('sha256', $fullPath);
 
         $stmt = $this->db->prepare("
-            SELECT file_hash, last_documented_at, documentation_path 
-            FROM documented_files 
+            SELECT file_hash, last_documented_at, documentation_path
+            FROM documented_files
             WHERE file_path = ?
         ");
         $stmt->execute([$filePath]);
@@ -60,8 +61,8 @@ class MemoryService
     public function recordDocumentation(string $filePath, string $hash, string $docPath): void
     {
         $stmt = $this->db->prepare("
-            INSERT OR REPLACE INTO documented_files 
-            (file_path, file_hash, documentation_path, last_documented_at) 
+            INSERT OR REPLACE INTO documented_files
+            (file_path, file_hash, documentation_path, last_documented_at)
             VALUES (?, ?, ?, datetime('now'))
         ");
         $stmt->execute([$filePath, $hash, $docPath]);
@@ -73,12 +74,12 @@ class MemoryService
     public function getStats(): array
     {
         $stmt = $this->db->query("
-            SELECT 
+            SELECT
                 COUNT(*) as total_files,
                 COUNT(CASE WHEN datetime(last_documented_at) > datetime('now', '-7 days') THEN 1 END) as recent_updates
             FROM documented_files
         ");
-        
+
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: ['total_files' => 0, 'recent_updates' => 0];
     }
 
@@ -89,7 +90,7 @@ class MemoryService
     {
         $stmt = $this->db->query("SELECT file_path FROM documented_files");
         $files = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         $deleted = 0;
         foreach ($files as $file) {
             if (!file_exists(base_path($file))) {
@@ -98,8 +99,38 @@ class MemoryService
                 $deleted++;
             }
         }
-        
+
         return $deleted;
+    }
+
+    /**
+     * Získá posledně zpracovaný Git commit
+     */
+    public function getLastProcessedCommit(): ?string
+    {
+        $stmt = $this->db->prepare("
+            SELECT commit_hash
+            FROM git_commits
+            ORDER BY processed_at DESC
+            LIMIT 1
+        ");
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $result ? $result['commit_hash'] : null;
+    }
+
+    /**
+     * Uloží posledně zpracovaný Git commit
+     */
+    public function setLastProcessedCommit(string $commitHash): void
+    {
+        $stmt = $this->db->prepare("
+            INSERT OR REPLACE INTO git_commits
+            (commit_hash, processed_at)
+            VALUES (?, datetime('now'))
+        ");
+        $stmt->execute([$commitHash]);
     }
 
     /**
@@ -137,12 +168,55 @@ class MemoryService
             ");
 
             $db->exec("
-                CREATE INDEX IF NOT EXISTS idx_last_documented 
+                CREATE INDEX IF NOT EXISTS idx_last_documented
                 ON documented_files(last_documented_at)
+            ");
+
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS git_commits (
+                    commit_hash TEXT PRIMARY KEY,
+                    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_processed_at
+                ON git_commits(processed_at)
             ");
 
         } catch (PDOException $e) {
             throw new \RuntimeException("Nelze vytvořit AutoDocs databázi: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Upgraduje existující databázi (přidá nové tabulky)
+     */
+    private function upgradeDatabase(): void
+    {
+        try {
+            // Zkontroluj jestli git_commits tabulka existuje
+            $stmt = $this->db->query("
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='git_commits'
+            ");
+
+            if (!$stmt->fetch()) {
+                // Vytvoř git_commits tabulku
+                $this->db->exec("
+                    CREATE TABLE git_commits (
+                        commit_hash TEXT PRIMARY KEY,
+                        processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_processed_at
+                    ON git_commits(processed_at)
+                ");
+            }
+        } catch (PDOException $e) {
+            // Ignoruj chyby při upgrade - databáze může být již aktuální
         }
     }
 }
