@@ -1,12 +1,12 @@
 # Digidocs - AI-Powered Laravel Documentation Generator
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/karlost/digidocs)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/karlost/digidocs)
 [![Laravel](https://img.shields.io/badge/Laravel-10%2B-red.svg)](https://laravel.com)
 [![PHP](https://img.shields.io/badge/PHP-8.2%2B-purple.svg)](https://php.net)
 
 Digidocs je pokročilý Laravel package pro automatické generování dokumentace PHP kódu pomocí umělé inteligence s využitím NeuronAI frameworku.
 
-> **🆕 Verze 1.3.0** - Vylepšená inteligentní analýza! ChangeAnalysisAgent nyní používá DocumentationAnalyzer pro sledování dokumentovaných částí kódu a pokročilé heuristiky pro rozhodování o regeneraci dokumentace.
+> **🆕 Verze 1.3.1** - Kompletně otestovaná verze! Prošla rozsáhlým testováním všech funkcionalit včetně inteligentní analýzy, cost trackingu, error handlingu a recovery. Dokumentovány známé problémy pro transparentnost.
 
 ## ✨ Klíčové funkce
 
@@ -146,7 +146,7 @@ php artisan digidocs:autodocs --force
 
 ### ⚠️ Známé problémy
 
-**Verze 1.3.0 obsahuje následující známé problémy:**
+**Verze 1.3.1 obsahuje následující známé problémy:**
 
 1. **GitAnalyzerTool - trim() errors**
    - Občasné chyby při zpracování Git výstupu
