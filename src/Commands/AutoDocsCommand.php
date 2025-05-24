@@ -15,8 +15,7 @@ class AutoDocsCommand extends Command
                                     {--dry-run : Show what would be processed without generating documentation}
                                     {--cleanup : Clean up memory database from non-existent files}
                                     {--stats : Show documentation statistics}
-                                    {--path=* : Specific paths to process}
-                                    {--all : Process all files instead of only Git changes}';
+                                    {--path=* : Specific paths to process}';
 
     protected $description = 'Generate documentation using AI agent for PHP files changed in Git commits';
 
@@ -30,7 +29,7 @@ class AutoDocsCommand extends Command
 
     public function handle(): int
     {
-        $this->info('🤖 AutoDocs AI Agent - Starting...');
+        $this->info('🤖 AutoDocs AI Agent v1.2.0 - Starting...');
 
         // Statistiky
         if ($this->option('stats')) {
@@ -42,9 +41,9 @@ class AutoDocsCommand extends Command
             return $this->cleanup();
         }
 
-        // Zkontroluj Git dostupnost (pokud není --all)
-        if (!$this->option('all') && !$this->gitWatcher->isGitAvailable()) {
-            $this->error("❌ Git repository not available. Use --all to process all files or ensure you're in a Git repository.");
+        // Zkontroluj Git dostupnost
+        if (!$this->gitWatcher->isGitAvailable()) {
+            $this->error("❌ Git repository not available. Ensure you're in a Git repository.");
             return 1;
         }
 
@@ -52,16 +51,11 @@ class AutoDocsCommand extends Command
         $files = $this->getFilesToProcess();
 
         if (empty($files)) {
-            if ($this->option('all')) {
-                $this->info('📭 No PHP files found to process.');
-            } else {
-                $this->info('📭 No changed PHP files found in recent Git commits.');
-            }
+            $this->info('📭 No changed PHP files found in recent Git commits.');
             return 0;
         }
 
-        $mode = $this->option('all') ? 'all files' : 'Git changes';
-        $this->line("📋 Found " . count($files) . " PHP files to check (mode: {$mode})");
+        $this->line("📋 Found " . count($files) . " PHP files to check (mode: Git changes)");
 
         $processed = 0;
         $skipped = 0;
@@ -184,46 +178,7 @@ class AutoDocsCommand extends Command
      */
     private function getFilesToProcess(): array
     {
-        // Pokud je --all, použij původní logiku
-        if ($this->option('all')) {
-            return $this->getAllFilesToProcess();
-        }
-
-        // Jinak použij Git logiku
         return $this->getGitChangedFiles();
-    }
-
-    /**
-     * Získá všechny soubory (původní logika)
-     */
-    private function getAllFilesToProcess(): array
-    {
-        $paths = $this->option('path');
-
-        if (empty($paths)) {
-            $paths = config('digidocs.paths.watch', ['app/']);
-        }
-
-        $files = [];
-        $excludeDirs = config('digidocs.processing.exclude_dirs', []);
-
-        foreach ($paths as $path) {
-            $fullPath = base_path($path);
-
-            if (!File::exists($fullPath)) {
-                $this->line("⚠️  Path not found: {$path}");
-                continue;
-            }
-
-            if (File::isFile($fullPath) && $this->isValidPhpFile($fullPath)) {
-                $files[] = str_replace(base_path() . '/', '', $fullPath);
-            } elseif (File::isDirectory($fullPath)) {
-                $foundFiles = $this->scanDirectoryForPhpFiles($fullPath, $excludeDirs);
-                $files = array_merge($files, $foundFiles);
-            }
-        }
-
-        return array_unique($files);
     }
 
     /**
@@ -296,45 +251,6 @@ class AutoDocsCommand extends Command
         }
 
         return $filtered;
-    }
-
-    /**
-     * Prohledá adresář rekurzivně pro PHP soubory
-     */
-    private function scanDirectoryForPhpFiles(string $directory, array $excludeDirs): array
-    {
-        $files = [];
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \RecursiveDirectoryIterator::SKIP_DOTS)
-        );
-
-        foreach ($iterator as $file) {
-            if (!$file->isFile()) {
-                continue;
-            }
-
-            $relativePath = str_replace(base_path() . '/', '', $file->getPathname());
-
-            // Zkontroluj vyloučené adresáře
-            $shouldExcludeDir = false;
-            foreach ($excludeDirs as $excludeDir) {
-                if (str_contains($relativePath, $excludeDir)) {
-                    $shouldExcludeDir = true;
-                    break;
-                }
-            }
-
-            if ($shouldExcludeDir) {
-                continue;
-            }
-
-            if ($this->isValidPhpFile($file->getPathname())) {
-                $files[] = $relativePath;
-            }
-        }
-
-        return $files;
     }
 
     /**

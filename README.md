@@ -75,21 +75,6 @@ php artisan autodocs --path=app/Models --path=app/Controllers
 4. 🤖 Generuje dokumentaci pouze pro změněné soubory
 5. 💾 Ukládá poslední zpracovaný commit do databáze
 
-### 📁 Režim všech souborů
-
-Pro zpracování všech souborů (původní chování) použijte `--all`:
-
-```bash
-# Zpracuje všechny PHP soubory v sledovaných cestách
-php artisan autodocs --all
-
-# Force regenerace všech souborů
-php artisan autodocs --all --force
-
-# Dry run pro všechny soubory
-php artisan autodocs --all --dry-run
-```
-
 ### Správa a statistiky
 
 ```bash
@@ -302,8 +287,8 @@ git status
 # Zkontroluj přístupová práva
 ls -la .git/
 
-# Pokud Git není dostupný, použij --all režim
-php artisan autodocs --all
+# Ujisti se že je projekt Git repository
+php artisan autodocs
 ```
 
 ### Git commit monitoring
