@@ -6,7 +6,6 @@
 
 Digidocs is an advanced Laravel package for automatic PHP code documentation generation using artificial intelligence with the NeuronAI framework.
 
-> **🆕 Version 1.3.1** - Fully tested version! Underwent extensive testing of all functionalities including intelligent analysis, cost tracking, error handling and recovery. Known issues documented for transparency.
 
 ## ✨ Key Features
 
