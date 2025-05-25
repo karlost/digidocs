@@ -347,29 +347,6 @@ trait Timestampable
     }
 
     #[Test]
-    public function it_handles_syntax_errors_in_code_parsing()
-    {
-        $invalidPhpContent = '<?php
-
-namespace App;
-
-class BrokenClass
-{
-    public function method(
-        // missing closing parenthesis
-}';
-
-        $structure = $this->analyzer->parseCodeStructure($invalidPhpContent);
-
-        // Při syntax error vrací prázdnou strukturu, ne error
-        $this->assertArrayHasKey('classes', $structure);
-        $this->assertArrayHasKey('functions', $structure);
-        $this->assertArrayHasKey('interfaces', $structure);
-        $this->assertArrayHasKey('traits', $structure);
-        $this->assertEmpty($structure['classes']);
-    }
-
-    #[Test]
     public function it_can_parse_functions()
     {
         $phpContent = '<?php

@@ -143,17 +143,6 @@ git status
 php artisan digidocs:autodocs --force
 ```
 
-### ⚠️ Known Issues
-
-**Version 1.3.1 contains the following known issues:**
-
-1. **WatchCommand - path handling**
-   - Issues with duplicate paths on Windows
-   - Does not affect documentation generation
-   - Workaround: Restart watch command
-
-**These issues do not affect the basic documentation generation functionality and will be fixed in the next version.**
-
 ## 💡 Quick Start
 
 ```bash

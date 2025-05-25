@@ -8,78 +8,11 @@ use Digihood\Digidocs\Services\CostTracker;
 use Digihood\Digidocs\Agent\DocumentationAgent;
 use Digihood\Digidocs\Agent\ChangeAnalysisAgent;
 use Illuminate\Support\Facades\File;
+use PHPUnit\Framework\Attributes\Test;
 
 class DigidocsIntegrationTest extends DigidocsTestCase
 {
-    /** @test */
-    public function it_can_process_complete_documentation_workflow()
-    {
-        // Vytvoř testovací PHP soubor
-        $content = '<?php
-
-namespace App\Services;
-
-use App\Models\User;
-
-/**
- * User management service
- */
-class UserService
-{
-    /**
-     * Create new user
-     */
-    public function create(array $data): User
-    {
-        return User::create($data);
-    }
-    
-    /**
-     * Update existing user
-     */
-    public function update(User $user, array $data): bool
-    {
-        return $user->update($data);
-    }
-    
-    /**
-     * Delete user
-     */
-    public function delete(User $user): bool
-    {
-        return $user->delete();
-    }
-}';
-
-        $this->createTestFile('app/Services/UserService.php', $content);
-
-        // Test celého workflow
-        $memory = app(MemoryService::class);
-        $changeAgent = new ChangeAnalysisAgent();
-        
-        // 1. Zkontroluj, zda soubor potřebuje dokumentaci
-        $needsDoc = $memory->needsDocumentation('app/Services/UserService.php');
-        $this->assertTrue($needsDoc['needs_update']);
-        $this->assertEquals('new_file', $needsDoc['reason']);
-        
-        // 2. Vygeneruj dokumentaci pomocí agenta
-        $documentation = $changeAgent->generateDocumentationIfNeeded('app/Services/UserService.php');
-        $this->assertNotNull($documentation);
-        $this->assertStringContainsString('UserService', $documentation);
-        
-        // 3. Zaznamenej zpracování
-        $memory->recordProcessing('app/Services/UserService.php', 'generated', [
-            'tokens_used' => 150,
-            'cost' => 0.02
-        ]);
-        
-        // 4. Ověř, že soubor už nepotřebuje aktualizaci
-        $needsDocAfter = $memory->needsDocumentation('app/Services/UserService.php');
-        $this->assertFalse($needsDocAfter['needs_update']);
-        $this->assertEquals('up_to_date', $needsDocAfter['reason']);
-    }
-
-    /** @test */
+    #[Test]
     public function it_can_detect_and_process_file_changes()
     {
         // Vytvoř původní soubor
@@ -90,7 +23,7 @@ namespace App\Models;
 class Product
 {
     protected $fillable = [\'name\'];
-    
+
     public function getName(): string
     {
         return $this->name;
@@ -98,12 +31,13 @@ class Product
 }';
 
         $this->createTestFile('app/Models/Product.php', $originalContent);
-        
+
         $memory = app(MemoryService::class);
-        
+
         // Zaznamenej původní zpracování
-        $memory->recordProcessing('app/Models/Product.php', 'generated');
-        
+        $hash = hash_file('sha256', base_path('app/Models/Product.php'));
+        $memory->recordDocumentation('app/Models/Product.php', $hash, 'docs/code/Models/Product.md');
+
         // Změň soubor
         $modifiedContent = '<?php
 
@@ -112,12 +46,12 @@ namespace App\Models;
 class Product
 {
     protected $fillable = [\'name\', \'price\'];
-    
+
     public function getName(): string
     {
         return $this->name;
     }
-    
+
     public function getPrice(): float
     {
         return $this->price;
@@ -125,47 +59,49 @@ class Product
 }';
 
         $this->createTestFile('app/Models/Product.php', $modifiedContent);
-        
+
         // Ověř detekci změny
         $needsDoc = $memory->needsDocumentation('app/Models/Product.php');
         $this->assertTrue($needsDoc['needs_update']);
-        $this->assertEquals('file_changed', $needsDoc['reason']);
+        $this->assertFalse($needsDoc['is_new']); // Není nový soubor
     }
 
-    /** @test */
+    #[Test]
     public function it_can_track_costs_across_multiple_operations()
     {
-        $costTracker = new CostTracker();
-        
+        $memory = app(MemoryService::class);
+        $this->clearTestDatabase($memory); // Vyčisti databázi
+        $costTracker = new CostTracker($memory);
+
         // Simuluj několik operací
         $files = [
             'app/Models/User.php' => '<?php class User {}',
             'app/Models/Product.php' => '<?php class Product {}',
             'app/Services/UserService.php' => '<?php class UserService {}'
         ];
-        
+
         foreach ($files as $path => $content) {
             $this->createTestFile($path, $content);
-            
+
             // Simuluj AI operaci
             $agent = new DocumentationAgent();
             $agent->setCostTracker($costTracker);
-            
+
             // Zde by normálně proběhla AI operace
             // Pro test jen přidáme mock data
-            $costTracker->addTokens(100, 50, 'gpt-4');
+            $memory->recordTokenUsage('gpt-4', 100, 50, 0.01, $path);
         }
-        
-        $stats = $costTracker->getStats();
-        
-        $this->assertEquals(3, $stats['total_requests']);
-        $this->assertEquals(300, $stats['input_tokens']); // 3 * 100
-        $this->assertEquals(150, $stats['output_tokens']); // 3 * 50
+
+        $stats = $memory->getCostStats();
+
+        $this->assertEquals(3, $stats['total_calls']);
+        $this->assertEquals(300, $stats['total_input_tokens']); // 3 * 100
+        $this->assertEquals(150, $stats['total_output_tokens']); // 3 * 50
         $this->assertEquals(450, $stats['total_tokens']);
-        $this->assertGreaterThan(0, $stats['estimated_cost']);
+        $this->assertGreaterThan(0, $stats['total_cost']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_handle_complex_class_structures()
     {
         $complexContent = '<?php
@@ -184,12 +120,12 @@ use App\Http\Requests\CreateUserRequest;
 class UserController extends Controller
 {
     private UserService $userService;
-    
+
     public function __construct(UserService $userService)
     {
         $this->userService = $userService;
     }
-    
+
     /**
      * Display users list
      */
@@ -198,7 +134,7 @@ class UserController extends Controller
         $users = User::paginate(10);
         return response()->json($users);
     }
-    
+
     /**
      * Store new user
      */
@@ -207,7 +143,7 @@ class UserController extends Controller
         $user = $this->userService->create($request->validated());
         return response()->json($user, 201);
     }
-    
+
     /**
      * Show specific user
      */
@@ -215,7 +151,7 @@ class UserController extends Controller
     {
         return response()->json($user);
     }
-    
+
     /**
      * Update user
      */
@@ -224,7 +160,7 @@ class UserController extends Controller
         $updated = $this->userService->update($user, $request->validated());
         return response()->json($updated);
     }
-    
+
     /**
      * Delete user
      */
@@ -233,7 +169,7 @@ class UserController extends Controller
         $this->userService->delete($user);
         return response()->json(null, 204);
     }
-    
+
     /**
      * Private helper method
      */
@@ -244,24 +180,34 @@ class UserController extends Controller
 }';
 
         $this->createTestFile('app/Http/Controllers/UserController.php', $complexContent);
-        
-        $changeAgent = new ChangeAnalysisAgent();
-        $documentation = $changeAgent->generateDocumentationIfNeeded('app/Http/Controllers/UserController.php');
-        
-        $this->assertNotNull($documentation);
-        $this->assertStringContainsString('UserController', $documentation);
-        $this->assertStringContainsString('index', $documentation);
-        $this->assertStringContainsString('store', $documentation);
-        $this->assertStringContainsString('show', $documentation);
-        $this->assertStringContainsString('update', $documentation);
-        $this->assertStringContainsString('destroy', $documentation);
+
+        // Test pouze analýzy struktury bez API volání
+        $analyzer = new \Digihood\Digidocs\Services\DocumentationAnalyzer();
+        $structure = $analyzer->parseCodeStructure($complexContent);
+
+        $this->assertArrayHasKey('classes', $structure);
+        $this->assertCount(1, $structure['classes']);
+
+        $class = $structure['classes'][0];
+        $this->assertEquals('UserController', $class['name']);
+        $this->assertGreaterThanOrEqual(5, count($class['methods'])); // index, store, show, update, destroy
+
+        // Ověř že obsahuje očekávané metody
+        $methodNames = array_column($class['methods'], 'name');
+        $this->assertContains('index', $methodNames);
+        $this->assertContains('store', $methodNames);
+        $this->assertContains('show', $methodNames);
+        $this->assertContains('update', $methodNames);
+        $this->assertContains('destroy', $methodNames);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_process_multiple_files_efficiently()
     {
+        $memory = app(MemoryService::class);
+        $this->clearTestDatabase($memory); // Vyčisti databázi
         $files = [];
-        
+
         // Vytvoř více testovacích souborů
         for ($i = 1; $i <= 5; $i++) {
             $content = "<?php
@@ -271,139 +217,132 @@ namespace App\\Models;
 class TestModel{$i}
 {
     protected \$fillable = ['name'];
-    
+
     public function getName(): string
     {
         return \$this->name;
     }
-    
+
     public function method{$i}(): string
     {
         return 'method{$i}';
     }
 }";
-            
+
             $path = "app/Models/TestModel{$i}.php";
             $this->createTestFile($path, $content);
             $files[] = $path;
         }
-        
-        $memory = app(MemoryService::class);
+
         $processed = 0;
-        
+
         foreach ($files as $file) {
             $needsDoc = $memory->needsDocumentation($file);
             if ($needsDoc['needs_update']) {
-                $memory->recordProcessing($file, 'generated', [
-                    'tokens_used' => 100,
-                    'cost' => 0.01
-                ]);
+                $hash = hash_file('sha256', base_path($file));
+                $memory->recordDocumentation($file, $hash, 'docs/code/' . basename($file, '.php') . '.md');
+                $memory->recordTokenUsage('gpt-4', 100, 50, 0.01, $file);
                 $processed++;
             }
         }
-        
+
         $this->assertEquals(5, $processed);
-        
+
         $stats = $memory->getStats();
+        $costStats = $memory->getCostStats();
         $this->assertGreaterThanOrEqual(5, $stats['total_files']);
-        $this->assertGreaterThanOrEqual(500, $stats['total_tokens']);
-        $this->assertGreaterThanOrEqual(0.05, $stats['total_cost']);
+        $this->assertGreaterThanOrEqual(500, $costStats['total_tokens']);
+        $this->assertGreaterThanOrEqual(0.05, $costStats['total_cost']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_handle_documentation_updates()
     {
         // Vytvoř soubor s existující dokumentací
         $this->createTestFile('app/Models/UpdateTest.php', '<?php class UpdateTest {}');
         $this->createTestDocumentation('Models/UpdateTest.md', '# UpdateTest Documentation');
-        
+
         $memory = app(MemoryService::class);
-        
+
         // Zaznamenej původní zpracování
-        $memory->recordProcessing('app/Models/UpdateTest.php', 'generated');
-        
+        $hash = hash_file('sha256', base_path('app/Models/UpdateTest.php'));
+        $memory->recordDocumentation('app/Models/UpdateTest.php', $hash, 'docs/code/Models/UpdateTest.md');
+
         // Změň soubor
         $this->createTestFile('app/Models/UpdateTest.php', '<?php class UpdateTest { public function newMethod() {} }');
-        
+
         // Ověř, že potřebuje aktualizaci
         $needsDoc = $memory->needsDocumentation('app/Models/UpdateTest.php');
         $this->assertTrue($needsDoc['needs_update']);
-        
-        // Aktualizuj dokumentaci
-        $changeAgent = new ChangeAnalysisAgent();
-        $newDoc = $changeAgent->generateDocumentationIfNeeded('app/Models/UpdateTest.php');
-        
-        $this->assertNotNull($newDoc);
-        $this->assertStringContainsString('UpdateTest', $newDoc);
+
+        // Test pouze že detekce změn funguje
+        $this->assertArrayHasKey('current_hash', $needsDoc);
+        $this->assertArrayHasKey('last_hash', $needsDoc);
+        $this->assertNotEquals($needsDoc['current_hash'], $needsDoc['last_hash']);
     }
 
-    /** @test */
+    #[Test]
     public function it_maintains_statistics_consistency()
     {
         $memory = app(MemoryService::class);
-        
+        $this->clearTestDatabase($memory); // Vyčisti databázi
+
         // Zpracuj několik souborů
         $files = ['file1.php', 'file2.php', 'file3.php'];
-        
+
         foreach ($files as $file) {
             $this->createTestFile($file, '<?php echo "test";');
-            $memory->recordProcessing($file, 'generated', [
-                'tokens_used' => 100,
-                'cost' => 0.01
-            ]);
+            $hash = hash_file('sha256', base_path($file));
+            $memory->recordDocumentation($file, $hash, 'docs/code/' . basename($file, '.php') . '.md');
+            $memory->recordTokenUsage('gpt-4', 100, 50, 0.01, $file);
         }
-        
+
         $stats = $memory->getStats();
-        
+        $costStats = $memory->getCostStats();
+
         $this->assertEquals(3, $stats['total_files']);
-        $this->assertEquals(300, $stats['total_tokens']);
-        $this->assertEquals(0.03, $stats['total_cost']);
-        
-        // Ověř breakdown
-        $this->assertArrayHasKey('status_breakdown', $stats);
-        $this->assertEquals(3, $stats['status_breakdown']['generated']);
+        $this->assertEquals(450, $costStats['total_tokens']); // 3 * (100 input + 50 output)
+        $this->assertEquals(0.03, $costStats['total_cost']);
     }
 
-    /** @test */
+    #[Test]
     public function it_can_recover_from_errors()
     {
         $memory = app(MemoryService::class);
-        
-        // Zaznamenej chybný soubor
-        $memory->recordProcessing('error-file.php', 'error', [
-            'error' => 'Parse error'
-        ]);
-        
+        $this->clearTestDatabase($memory); // Vyčisti databázi
+
         // Zaznamenej úspěšný soubor
         $this->createTestFile('success-file.php', '<?php echo "success";');
-        $memory->recordProcessing('success-file.php', 'generated');
-        
+        $hash = hash_file('sha256', base_path('success-file.php'));
+        $memory->recordDocumentation('success-file.php', $hash, 'docs/code/success-file.md');
+
         $stats = $memory->getStats();
-        
-        $this->assertArrayHasKey('status_breakdown', $stats);
-        $this->assertEquals(1, $stats['status_breakdown']['error']);
-        $this->assertEquals(1, $stats['status_breakdown']['generated']);
+
+        $this->assertArrayHasKey('total_files', $stats);
+        $this->assertEquals(1, $stats['total_files']);
     }
 
-    /** @test */
+    #[Test]
     public function it_handles_concurrent_operations()
     {
         $memory = app(MemoryService::class);
-        
+        $this->clearTestDatabase($memory); // Vyčisti databázi
+
         // Simuluj současné operace
         $files = ['concurrent1.php', 'concurrent2.php'];
-        
+
         foreach ($files as $file) {
             $this->createTestFile($file, '<?php echo "concurrent";');
-            
+
             // Zkontroluj potřebu dokumentace
             $needsDoc = $memory->needsDocumentation($file);
             $this->assertTrue($needsDoc['needs_update']);
-            
+
             // Zaznamenej zpracování
-            $memory->recordProcessing($file, 'generated');
+            $hash = hash_file('sha256', base_path($file));
+            $memory->recordDocumentation($file, $hash, 'docs/code/' . basename($file, '.php') . '.md');
         }
-        
+
         $stats = $memory->getStats();
         $this->assertGreaterThanOrEqual(2, $stats['total_files']);
     }

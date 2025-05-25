@@ -159,14 +159,17 @@ class WatchCommand extends Command
         $filtered = [];
 
         foreach ($files as $file) {
+            // Normalizuj cestu pro Windows kompatibilitu
+            $normalizedFile = str_replace('\\', '/', $file);
+
             // Zkontroluj rozšíření
-            $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+            $extension = strtolower(pathinfo($normalizedFile, PATHINFO_EXTENSION));
             if (!in_array($extension, $extensions)) {
                 continue;
             }
 
             // Zkontroluj vyloučené soubory
-            $fileName = basename($file);
+            $fileName = basename($normalizedFile);
             $shouldExclude = false;
             foreach ($excludeFiles as $pattern) {
                 if (fnmatch($pattern, $fileName)) {
@@ -181,14 +184,16 @@ class WatchCommand extends Command
             // Zkontroluj jestli je v sledovaných cestách
             $inWatchPath = false;
             foreach ($watchPaths as $watchPath) {
-                if (str_starts_with($file, rtrim($watchPath, '/'))) {
+                // Normalizuj watch path pro Windows kompatibilitu
+                $normalizedWatchPath = str_replace('\\', '/', rtrim($watchPath, '/\\'));
+                if (str_starts_with($normalizedFile, $normalizedWatchPath)) {
                     $inWatchPath = true;
                     break;
                 }
             }
 
-            if ($inWatchPath && file_exists(base_path($file))) {
-                $filtered[] = $file;
+            if ($inWatchPath && file_exists(base_path($normalizedFile))) {
+                $filtered[] = $normalizedFile;
             }
         }
 

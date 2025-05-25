@@ -6,11 +6,14 @@ use Digihood\Digidocs\DigidocsServiceProvider;
 use Orchestra\Testbench\TestCase;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Config;
+use Digihood\Digidocs\Services\MemoryService;
+use ReflectionClass;
 
 abstract class DigidocsTestCase extends TestCase
 {
     protected string $testDataPath;
     protected string $testDocsPath;
+    protected string $testDbPath;
 
     protected function setUp(): void
     {
@@ -18,6 +21,13 @@ abstract class DigidocsTestCase extends TestCase
 
         $this->testDataPath = base_path('tests/data');
         $this->testDocsPath = base_path('docs/test');
+
+        // Vytvoř unikátní databázi pro každý test
+        $this->testDbPath = storage_path('digidocs_test_' . uniqid() . '.sqlite');
+        config(['digidocs.memory.database_path' => $this->testDbPath]);
+
+        // Vyčisti cache služeb
+        $this->app->forgetInstance(MemoryService::class);
 
         // Vytvoř testovací adresáře
         File::makeDirectory($this->testDataPath, 0755, true, true);
@@ -32,6 +42,11 @@ abstract class DigidocsTestCase extends TestCase
 
     protected function tearDown(): void
     {
+        // Smaž testovací databázi
+        if (isset($this->testDbPath) && file_exists($this->testDbPath)) {
+            unlink($this->testDbPath);
+        }
+
         // Vyčisti testovací adresáře
         if (File::exists($this->testDataPath)) {
             File::deleteDirectory($this->testDataPath);
@@ -110,5 +125,22 @@ abstract class DigidocsTestCase extends TestCase
         File::makeDirectory(dirname($fullPath), 0755, true, true);
         File::put($fullPath, $content);
         return $fullPath;
+    }
+
+    /**
+     * Vyčisti testovací databázi
+     */
+    protected function clearTestDatabase(MemoryService $memory): void
+    {
+        $reflection = new ReflectionClass($memory);
+        $dbProperty = $reflection->getProperty('db');
+        $dbProperty->setAccessible(true);
+        $db = $dbProperty->getValue($memory);
+
+        $db->exec("DELETE FROM documented_files");
+        $db->exec("DELETE FROM token_usage");
+        $db->exec("DELETE FROM change_analysis");
+        $db->exec("DELETE FROM documented_code_parts");
+        $db->exec("DELETE FROM git_commits");
     }
 }

@@ -468,7 +468,7 @@ class AutoDocsCommand extends Command
             if ($this->option('force')) {
                 $this->line("🔍 Force mode - processing files from current commit...");
                 $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $currentCommitHash . '~1');
-            } else if ($lastProcessedCommit !== $currentCommitHash) {
+            } else if ($lastProcessedCommit !== null && $lastProcessedCommit !== $currentCommitHash) {
                 $this->line("🔍 Processing files changed since last run...");
                 $changedFiles = $this->gitWatcher->getChangedFilesInCommit($currentCommitHash, $lastProcessedCommit);
             } else {
