@@ -39,7 +39,7 @@ class CodeVisitor extends NodeVisitorAbstract
         // Classes
         if ($node instanceof Class_) {
             $className = $node->name->toString();
-            
+
             $classInfo = [
                 'name' => $className,
                 'extends' => $node->extends ? $node->extends->toString() : null,
@@ -64,7 +64,7 @@ class CodeVisitor extends NodeVisitorAbstract
                 'is_abstract' => $node->isAbstract(),
                 'is_final' => $node->isFinal(),
                 'parameters' => $this->extractParameters($node),
-                'return_type' => $node->returnType ? $node->returnType->toString() : null,
+                'return_type' => $node->returnType ? $this->getTypeString($node->returnType) : null,
                 'docblock' => $this->extractDocComment($node),
                 'line' => $node->getStartLine(),
             ];
@@ -81,7 +81,7 @@ class CodeVisitor extends NodeVisitorAbstract
                     'is_protected' => $node->isProtected(),
                     'is_private' => $node->isPrivate(),
                     'is_static' => $node->isStatic(),
-                    'type' => $node->type ? $node->type->toString() : null,
+                    'type' => $node->type ? $this->getTypeString($node->type) : null,
                     'default' => $prop->default ? $this->nodeToString($prop->default) : null,
                     'docblock' => $this->extractDocComment($node),
                     'line' => $node->getStartLine(),
@@ -130,11 +130,11 @@ class CodeVisitor extends NodeVisitorAbstract
     private function extractParameters(ClassMethod $method): array
     {
         $parameters = [];
-        
+
         foreach ($method->params as $param) {
             $paramInfo = [
                 'name' => $param->var->name,
-                'type' => $param->type ? $param->type->toString() : null,
+                'type' => $param->type ? $this->getTypeString($param->type) : null,
                 'is_nullable' => $param->type && $param->type instanceof Node\NullableType,
                 'has_default' => $param->default !== null,
                 'default' => $param->default ? $this->nodeToString($param->default) : null,
@@ -154,13 +154,13 @@ class CodeVisitor extends NodeVisitorAbstract
     private function extractDocComment(Node $node): ?array
     {
         $docComment = $node->getDocComment();
-        
+
         if (!$docComment) {
             return null;
         }
 
         $text = $docComment->getText();
-        
+
         return [
             'raw' => $text,
             'summary' => $this->extractSummary($text),
@@ -195,7 +195,7 @@ class CodeVisitor extends NodeVisitorAbstract
 
         foreach ($lines as $line) {
             $line = trim($line, " \t\n\r\0\x0B/*");
-            
+
             if (empty($line)) {
                 if ($inDescription) {
                     $description[] = '';
@@ -229,16 +229,16 @@ class CodeVisitor extends NodeVisitorAbstract
 
         foreach ($lines as $line) {
             $line = trim($line, " \t\n\r\0\x0B/*");
-            
+
             if (str_starts_with($line, '@')) {
                 if (preg_match('/^@(\w+)(?:\s+(.*))?$/', $line, $matches)) {
                     $tagName = $matches[1];
                     $tagValue = $matches[2] ?? '';
-                    
+
                     if (!isset($tags[$tagName])) {
                         $tags[$tagName] = [];
                     }
-                    
+
                     $tags[$tagName][] = $tagValue;
                 }
             }
@@ -256,15 +256,15 @@ class CodeVisitor extends NodeVisitorAbstract
         if ($node instanceof Node\Scalar\String_) {
             return "'{$node->value}'";
         }
-        
+
         if ($node instanceof Node\Scalar\LNumber) {
             return (string) $node->value;
         }
-        
+
         if ($node instanceof Node\Scalar\DNumber) {
             return (string) $node->value;
         }
-        
+
         if ($node instanceof Node\Expr\ConstFetch) {
             return $node->name->toString();
         }
@@ -274,5 +274,55 @@ class CodeVisitor extends NodeVisitorAbstract
         }
 
         return 'mixed';
+    }
+
+    /**
+     * Bezpečně získá string reprezentaci typu z PhpParser Node
+     */
+    private function getTypeString($type): string
+    {
+        if ($type === null) {
+            return '';
+        }
+
+        // Pokud má metodu toString(), použij ji
+        if (method_exists($type, 'toString')) {
+            return $type->toString();
+        }
+
+        // Pro NullableType
+        if ($type instanceof \PhpParser\Node\NullableType) {
+            return '?' . $this->getTypeString($type->type);
+        }
+
+        // Pro UnionType (PHP 8.0+)
+        if ($type instanceof \PhpParser\Node\UnionType) {
+            $types = array_map(fn($t) => $this->getTypeString($t), $type->types);
+            return implode('|', $types);
+        }
+
+        // Pro IntersectionType (PHP 8.1+)
+        if (class_exists('\PhpParser\Node\IntersectionType') && $type instanceof \PhpParser\Node\IntersectionType) {
+            $types = array_map(fn($t) => $this->getTypeString($t), $type->types);
+            return implode('&', $types);
+        }
+
+        // Pro Identifier
+        if ($type instanceof \PhpParser\Node\Identifier) {
+            return $type->name;
+        }
+
+        // Pro Name (qualified names)
+        if ($type instanceof \PhpParser\Node\Name) {
+            return $type->toString();
+        }
+
+        // Fallback - pokus se převést na string
+        if (is_object($type) && method_exists($type, '__toString')) {
+            return (string) $type;
+        }
+
+        // Poslední možnost - vrať název třídy
+        return get_class($type);
     }
 }

@@ -4,220 +4,191 @@
 [![Laravel](https://img.shields.io/badge/Laravel-10%2B-red.svg)](https://laravel.com)
 [![PHP](https://img.shields.io/badge/PHP-8.2%2B-purple.svg)](https://php.net)
 
-Digidocs je pokročilý Laravel package pro automatické generování dokumentace PHP kódu pomocí umělé inteligence s využitím NeuronAI frameworku.
+Digidocs is an advanced Laravel package for automatic PHP code documentation generation using artificial intelligence with the NeuronAI framework.
 
-> **🆕 Verze 1.3.1** - Kompletně otestovaná verze! Prošla rozsáhlým testováním všech funkcionalit včetně inteligentní analýzy, cost trackingu, error handlingu a recovery. Dokumentovány známé problémy pro transparentnost.
+> **🆕 Version 1.3.1** - Fully tested version! Underwent extensive testing of all functionalities including intelligent analysis, cost tracking, error handling and recovery. Known issues documented for transparency.
 
-## ✨ Klíčové funkce
+## ✨ Key Features
 
-- 🤖 **AI-powered dokumentace** - Využívá OpenAI/GPT-4 pro generování kvalitní dokumentace
-- 🧠 **Inteligentní analýza změn** - ChangeAnalysisAgent s pokročilými heuristikami pro rozhodování o regeneraci
-- 📋 **Tracking dokumentovaných částí** - DocumentationAnalyzer sleduje které části kódu jsou dokumentované
-- 🔄 **Git commit monitoring** - Automatické sledování Git commitů a zpracování pouze změněných souborů
-- 👁️ **Real-time watch mode** - Kontinuální sledování Git commitů s automatickou regenerací
-- 📊 **Sémantická analýza** - Rozlišuje mezi veřejnými API změnami a privátními implementačními detaily
-- 💾 **SQLite tracking** - Efektivní sledování změn souborů, commitů, analýz a dokumentovaných částí
-- 🛠️ **NeuronAI architektura** - Modulární systém s Agents a Tools
-- 🔍 **Laravel kontext** - Rozpoznává Controllers, Models, Commands, Services, atd.
-- ⚡ **Artisan commands** - Snadné použití přes CLI
-- 🎯 **Efektivní zpracování** - Skip rate až 19% díky inteligentní analýze
+- 🤖 **AI-powered documentation** - Uses OpenAI/GPT-4 for generating high-quality documentation
+- 🧠 **Intelligent change analysis** - ChangeAnalysisAgent with advanced heuristics for regeneration decisions
+- 📋 **Documented parts tracking** - DocumentationAnalyzer tracks which parts of code are documented
+- 🔄 **Git commit monitoring** - Automatic Git commit tracking and processing only changed files
+- 👁️ **Real-time watch mode** - Continuous Git commit monitoring with automatic regeneration
+- 📊 **Semantic analysis** - Distinguishes between public API changes and private implementation details
+- 💾 **SQLite tracking** - Efficient tracking of file changes, commits, analyses and documented parts
+- 🛠️ **NeuronAI architecture** - Modular system with Agents and Tools
+- 🔍 **Laravel context** - Recognizes Controllers, Models, Commands, Services, etc.
+- ⚡ **Artisan commands** - Easy usage through CLI
+- 🎯 **Efficient processing** - Skip rate up to 19% thanks to intelligent analysis
 
-## 🚀 Instalace
+## 🚀 Installation
 
 ```bash
 composer require karlost/digidocs
 ```
 
-## ⚙️ Konfigurace
+## ⚙️ Configuration
 
 ```bash
-# 1. Publikuj konfigurační soubor
+# 1. Publish configuration file
 php artisan vendor:publish --tag=digidocs-config
 
-# 2. Nastav API klíč v .env
+# 2. Set API key in .env
 AUTODOCS_AI_KEY=your-openai-api-key
 ```
 
-## 📋 Použití
+## 📋 Usage
 
-### 🔄 Automatické generování dokumentace
+### 🔄 Automatic Documentation Generation
 
-**Hlavní příkaz** - Zpracovává pouze soubory změněné v Git commitech s inteligentní analýzou:
+**Main command** - Processes only files changed in Git commits with intelligent analysis:
 
 ```bash
-# Zpracuje pouze soubory změněné v Git commitech od posledního spuštění
+# Process only files changed in Git commits since last run
 php artisan digidocs:autodocs
 
-# Force regenerace i pro nezměněné soubory
+# Force regeneration even for unchanged files
 php artisan digidocs:autodocs --force
 
-# Dry run - ukáže co by se zpracovalo
+# Dry run - shows what would be processed
 php artisan digidocs:autodocs --dry-run
 
-# Zpracování konkrétních cest
+# Process specific paths
 php artisan digidocs:autodocs --path=app/Models --path=app/Services
 ```
 
-**Inteligentní analýza:**
-- 🧠 **ChangeAnalysisAgent** rozhoduje zda regenerovat dokumentaci
-- ✅ **Veřejné API změny** → Regeneruje dokumentaci
-- ⏭️ **Privátní změny/whitespace** → Přeskakuje regeneraci
-- 📊 **Sleduje dokumentované části** kódu pro přesnější rozhodování
+**Intelligent analysis:**
+- 🧠 **ChangeAnalysisAgent** decides whether to regenerate documentation
+- ✅ **Public API changes** → Regenerates documentation
+- ⏭️ **Private changes/whitespace** → Skips regeneration
+- 📊 **Tracks documented parts** of code for more precise decisions
 
-### Správa a statistiky
+### Management and Statistics
 
 ```bash
-# Zobraz statistiky dokumentace a inteligentní analýzy
+# Show documentation and intelligent analysis statistics
 php artisan digidocs:autodocs --stats
 
-# Zobraz statistiky nákladů a tokenů
+# Show cost and token statistics
 php artisan digidocs:autodocs --cost
 
-# Vyčisti databázi od neexistujících souborů
+# Clean database from non-existent files
 php artisan digidocs:autodocs --cleanup
 ```
 
-### 👁️ Watch Mode - Real-time sledování Git commitů
+### 👁️ Watch Mode - Real-time Git Commit Monitoring
 
-Pro kontinuální sledování změn v real-time použijte watch mode s inteligentní analýzou:
+For continuous real-time change monitoring use watch mode with intelligent analysis:
 
 ```bash
-# Spusť watch mode - sleduje Git commity v real-time
+# Start watch mode - monitors Git commits in real-time
 php artisan digidocs:watch
 
-# Nastav interval kontroly (výchozí 5 sekund)
+# Set check interval (default 5 seconds)
 php artisan digidocs:watch --interval=10
 
-# Sleduj konkrétní cesty
+# Watch specific paths
 php artisan digidocs:watch --path=app/Models --path=app/Services
 ```
 
 **Watch mode:**
-- 🔄 Sleduje Git commity v real-time (každých 5 sekund)
-- 🧠 Používá stejnou inteligentní analýzu jako `autodocs`
-- 🛑 Graceful shutdown pomocí Ctrl+C
+- 🔄 Monitors Git commits in real-time (every 5 seconds)
+- 🧠 Uses the same intelligent analysis as `autodocs`
+- 🛑 Graceful shutdown using Ctrl+C
 
-**Rozdíl mezi režimy:**
-- **`autodocs`** - Jednorázové spuštění, zpracuje Git commity od posledního spuštění
-- **`watch`** - Kontinuální sledování, automaticky zpracovává nové Git commity
+**Difference between modes:**
+- **`autodocs`** - One-time execution, processes Git commits since last run
+- **`watch`** - Continuous monitoring, automatically processes new Git commits
 
-**Výstup obsahuje:**
-- 📊 **Celkové statistiky** - počet volání, tokeny, náklady
-- 🤖 **Statistiky podle modelů** - detaily pro každý použitý AI model
-- 📅 **Nedávná aktivita** - spotřeba za posledních 7 dní
-- 💰 **Aktuální ceny** - ceny modelů per 1M tokenů
+**Output includes:**
+- 📊 **Overall statistics** - call count, tokens, costs
+- 🤖 **Model-specific statistics** - details for each AI model used
+- 📅 **Recent activity** - consumption for the last 7 days
+- 💰 **Current prices** - model prices per 1M tokens
 
-**Podporované AI providery:**
+**Supported AI providers:**
 - ✅ **OpenAI** - GPT-4.1, GPT-4o, GPT-4, GPT-3.5, O3, O4-mini
 - ✅ **Anthropic** - Claude 4, Claude 3.7, Claude 3.5, Claude 3
 - ✅ **Gemini** - Gemini 1.5 Pro/Flash, Gemini 2.0 Flash
 - ✅ **Deepseek** - Deepseek Chat/Coder
 - ✅ **Mistral** - Mistral Large/Medium/Small
-- ✅ **Ollama** - Lokální modely (zdarma)
+- ✅ **Ollama** - Local models (free)
 
-**Konfigurace cen:**
-Ceny modelů jsou konfigurovatelné v `config/digidocs/pricing.php` a automaticky se aktualizují podle oficiálních cen providerů.
+**Price configuration:**
+Model prices are configurable in `config/digidocs/pricing.php` and automatically update according to official provider prices.
 
-## �🐛 Troubleshooting
+## 🐛 Troubleshooting
 
-### Základní problémy
+### Basic Issues
 ```bash
-# Zkontroluj API klíč a konfiguraci
+# Check API key and configuration
 php artisan config:cache
 
-# Otestuj bez generování dokumentace
+# Test without generating documentation
 php artisan digidocs:autodocs --dry-run
 
-# Zobraz statistiky a stav
+# Show statistics and status
 php artisan digidocs:autodocs --stats
 
-# Vyčisti databázi od neexistujících souborů
+# Clean database from non-existent files
 php artisan digidocs:autodocs --cleanup
 ```
 
-### Git problémy
+### Git Issues
 ```bash
-# Ujisti se že jsi v Git repository
+# Make sure you're in a Git repository
 git status
 
-# Force zpracování aktuálního commitu
+# Force processing of current commit
 php artisan digidocs:autodocs --force
 ```
 
-### ⚠️ Známé problémy
+### ⚠️ Known Issues
 
-**Verze 1.3.1 obsahuje následující známé problémy:**
+**Version 1.3.1 contains the following known issues:**
 
-1. **GitAnalyzerTool - trim() errors**
-   - Občasné chyby při zpracování Git výstupu
-   - Neovlivňuje základní funkcionalitu
-   - Workaround: Použij `--force` flag
+1. **WatchCommand - path handling**
+   - Issues with duplicate paths on Windows
+   - Does not affect documentation generation
+   - Workaround: Restart watch command
 
-2. **WatchCommand - path handling**
-   - Problémy s duplicitními cestami na Windows
-   - Neovlivňuje generování dokumentace
-   - Workaround: Restartuj watch command
+**These issues do not affect the basic documentation generation functionality and will be fixed in the next version.**
 
-3. **NeuronAI Tools compatibility**
-   - Některé Tools metody nejsou plně kompatibilní s nejnovější verzí NeuronAI
-   - Základní funkcionalita funguje správně
-   - Plánovaná oprava v příští verzi
-
-**Tyto problémy neovlivňují základní funkcionalitu generování dokumentace a budou opraveny v příští verzi.**
-
-## 💡 Rychlý start
+## 💡 Quick Start
 
 ```bash
-# 1. Nainstaluj a nakonfiguruj
+# 1. Install and configure
 composer require karlost/digidocs
 php artisan vendor:publish --tag=digidocs-config
 
-# 2. Nastav API klíč v .env
+# 2. Set API key in .env
 AUTODOCS_AI_KEY=your-openai-api-key
 
-# 3. Vygeneruj dokumentaci pro změněné soubory
+# 3. Generate documentation for changed files
 php artisan digidocs:autodocs
 
-# 4. Nebo spusť watch mode pro automatické sledování
+# 4. Or start watch mode for automatic monitoring
 php artisan digidocs:watch
 ```
 
-### Inteligentní analýza v akci
+### Intelligent Analysis in Action
 
 ```bash
-# Privátní změny se přeskočí
+# Private changes are skipped
 git commit -m "refactor: improve private method"
 # → "⏭️ Skipped (no significant changes)"
 
-# Veřejné API změny se zpracují
+# Public API changes are processed
 git commit -m "feat: add public getData method"
 # → "✅ Generated: docs/code/Models/User.md"
 ```
 
-## 📊 Příklad výstupu
+## 📊 Example Output
 
-Vygeneruje strukturovanou Markdown dokumentaci s:
-- **Přehled souboru** a jeho účel
-- **API dokumentace** - veřejné metody a vlastnosti
-- **Laravel kontext** - relationships, scopes, atd.
-- **Příklady použití** s code examples
+Generates structured Markdown documentation with:
+- **File overview** and its purpose
+- **API documentation** - public methods and properties
+- **Laravel context** - relationships, scopes, etc.
+- **Usage examples** with code examples
 
-## 🤝 Přispívání
-
-1. Fork repository
-2. Vytvoř feature branch
-3. Commit změny
-4. Push do branch
-5. Vytvoř Pull Request
-
-## 📄 Licence
-
-MIT
-
-## 👨‍💻 Autor
-
-**digihood** - info@digihood.com
-
----
-
-Vytvořeno s ❤️ a NeuronAI frameworkem

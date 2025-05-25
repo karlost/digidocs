@@ -127,7 +127,12 @@ class DocumentationAnalyzer
 
         } catch (Error $e) {
             \Log::warning("Failed to parse PHP code: " . $e->getMessage());
-            return [];
+            return [
+                'classes' => [],
+                'functions' => [],
+                'interfaces' => [],
+                'traits' => []
+            ];
         }
     }
 
@@ -204,14 +209,14 @@ class DocumentationAnalyzer
         $newStructure = $codeChanges['new_structure'];
 
         // Porovnej veřejné metody tříd
-        foreach ($newStructure['classes'] as $newClass) {
-            $oldClass = $this->findClassByName($oldStructure['classes'], $newClass['name']);
+        foreach ($newStructure['classes'] ?? [] as $newClass) {
+            $oldClass = $this->findClassByName($oldStructure['classes'] ?? [], $newClass['name']);
 
             if (!$oldClass) {
                 return true; // Nová třída
             }
 
-            if ($this->hasPublicMethodChanges($oldClass['methods'], $newClass['methods'])) {
+            if ($this->hasPublicMethodChanges($oldClass['methods'] ?? [], $newClass['methods'] ?? [])) {
                 return true;
             }
         }
@@ -254,10 +259,10 @@ class DocumentationAnalyzer
 
         // Porovnej počty elementů
         return (
-            count($oldStructure['classes']) !== count($newStructure['classes']) ||
-            count($oldStructure['functions']) !== count($newStructure['functions']) ||
-            count($oldStructure['interfaces']) !== count($newStructure['interfaces']) ||
-            count($oldStructure['traits']) !== count($newStructure['traits'])
+            count($oldStructure['classes'] ?? []) !== count($newStructure['classes'] ?? []) ||
+            count($oldStructure['functions'] ?? []) !== count($newStructure['functions'] ?? []) ||
+            count($oldStructure['interfaces'] ?? []) !== count($newStructure['interfaces'] ?? []) ||
+            count($oldStructure['traits'] ?? []) !== count($newStructure['traits'] ?? [])
         );
     }
 
@@ -284,7 +289,7 @@ class DocumentationAnalyzer
                     'name' => $stmt->name->toString(),
                     'visibility' => $this->getVisibility($stmt),
                     'parameters' => $this->extractParameters($stmt->params),
-                    'return_type' => $stmt->returnType ? $stmt->returnType->toString() : null
+                    'return_type' => $stmt->returnType ? $this->getTypeString($stmt->returnType) : null
                 ];
             } elseif ($stmt instanceof Node\Stmt\Property) {
                 foreach ($stmt->props as $prop) {
@@ -313,7 +318,7 @@ class DocumentationAnalyzer
         return [
             'name' => $function->name->toString(),
             'parameters' => $this->extractParameters($function->params),
-            'return_type' => $function->returnType ? $function->returnType->toString() : null
+            'return_type' => $function->returnType ? $this->getTypeString($function->returnType) : null
         ];
     }
 
@@ -328,7 +333,7 @@ class DocumentationAnalyzer
                 $methods[] = [
                     'name' => $stmt->name->toString(),
                     'parameters' => $this->extractParameters($stmt->params),
-                    'return_type' => $stmt->returnType ? $stmt->returnType->toString() : null
+                    'return_type' => $stmt->returnType ? $this->getTypeString($stmt->returnType) : null
                 ];
             }
         }
@@ -352,7 +357,7 @@ class DocumentationAnalyzer
                     'name' => $stmt->name->toString(),
                     'visibility' => $this->getVisibility($stmt),
                     'parameters' => $this->extractParameters($stmt->params),
-                    'return_type' => $stmt->returnType ? $stmt->returnType->toString() : null
+                    'return_type' => $stmt->returnType ? $this->getTypeString($stmt->returnType) : null
                 ];
             }
         }
@@ -383,7 +388,7 @@ class DocumentationAnalyzer
         foreach ($params as $param) {
             $parameters[] = [
                 'name' => $param->var->name,
-                'type' => $param->type ? $param->type->toString() : null,
+                'type' => $param->type ? $this->getTypeString($param->type) : null,
                 'default' => $param->default !== null
             ];
         }
@@ -408,8 +413,8 @@ class DocumentationAnalyzer
      */
     private function hasPublicMethodChanges(array $oldMethods, array $newMethods): bool
     {
-        $oldPublicMethods = array_filter($oldMethods, fn($m) => $m['visibility'] === 'public');
-        $newPublicMethods = array_filter($newMethods, fn($m) => $m['visibility'] === 'public');
+        $oldPublicMethods = array_filter($oldMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
+        $newPublicMethods = array_filter($newMethods, fn($m) => ($m['visibility'] ?? 'public') === 'public');
 
         return count($oldPublicMethods) !== count($newPublicMethods);
     }
@@ -433,5 +438,55 @@ class DocumentationAnalyzer
             default:
                 return true; // Neznámý typ - předpokládej že existuje
         }
+    }
+
+    /**
+     * Bezpečně získá string reprezentaci typu z PhpParser Node
+     */
+    private function getTypeString($type): string
+    {
+        if ($type === null) {
+            return '';
+        }
+
+        // Pokud má metodu toString(), použij ji
+        if (method_exists($type, 'toString')) {
+            return $type->toString();
+        }
+
+        // Pro NullableType
+        if ($type instanceof \PhpParser\Node\NullableType) {
+            return '?' . $this->getTypeString($type->type);
+        }
+
+        // Pro UnionType (PHP 8.0+)
+        if ($type instanceof \PhpParser\Node\UnionType) {
+            $types = array_map(fn($t) => $this->getTypeString($t), $type->types);
+            return implode('|', $types);
+        }
+
+        // Pro IntersectionType (PHP 8.1+)
+        if (class_exists('\PhpParser\Node\IntersectionType') && $type instanceof \PhpParser\Node\IntersectionType) {
+            $types = array_map(fn($t) => $this->getTypeString($t), $type->types);
+            return implode('&', $types);
+        }
+
+        // Pro Identifier
+        if ($type instanceof \PhpParser\Node\Identifier) {
+            return $type->name;
+        }
+
+        // Pro Name (qualified names)
+        if ($type instanceof \PhpParser\Node\Name) {
+            return $type->toString();
+        }
+
+        // Fallback - pokus se převést na string
+        if (is_object($type) && method_exists($type, '__toString')) {
+            return (string) $type;
+        }
+
+        // Poslední možnost - vrať název třídy
+        return get_class($type);
     }
 }

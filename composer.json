@@ -1,6 +1,7 @@
 {
     "name": "karlost/digidocs",
     "description": "AI-powered Laravel documentation generator with NeuronAI integration",
+    "version": "1.2.0",
     "type": "library",
     "license": "MIT",
     "keywords": ["laravel", "documentation", "ai", "neuronai", "php", "generator"],

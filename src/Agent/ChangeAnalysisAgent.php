@@ -142,252 +142,6 @@ class ChangeAnalysisAgent extends Agent
     }
 
     /**
-     * Rozhodne, zda je potřeba regenerovat dokumentaci pro soubor
-     * (zachováno pro zpětnou kompatibilitu)
-     */
-    public function shouldRegenerateDocumentation(
-        string $filePath,
-        string $oldContent,
-        string $newContent
-    ): array {
-        try {
-            \Log::info("ChangeAnalysisAgent: Analyzing {$filePath}");
-            \Log::info("Old content length: " . strlen($oldContent));
-            \Log::info("New content length: " . strlen($newContent));
-
-            // Rychlá kontrola - pokud je obsah stejný
-            if ($oldContent === $newContent) {
-                \Log::info("ChangeAnalysisAgent: Content identical, skipping regeneration");
-                return [
-                    'should_regenerate' => false,
-                    'confidence' => 1.0,
-                    'reason' => 'identical_content',
-                    'reasoning' => ['Obsah souboru je identický'],
-                    'change_summary' => [],
-                    'semantic_score' => 0
-                ];
-            }
-
-            // Pokud je starý obsah prázdný, je to nový soubor
-            if (empty(trim($oldContent))) {
-                \Log::info("ChangeAnalysisAgent: New file detected, regenerating");
-                return [
-                    'should_regenerate' => true,
-                    'confidence' => 1.0,
-                    'reason' => 'new_file',
-                    'reasoning' => ['Nový soubor vyžaduje dokumentaci'],
-                    'change_summary' => [],
-                    'semantic_score' => 100
-                ];
-            }
-
-            $prompt = $this->buildAnalysisPrompt($filePath, $oldContent, $newContent);
-
-            \Log::info("ChangeAnalysisAgent: Sending prompt to AI using run() method");
-            $response = $this->run(
-                new \NeuronAI\Chat\Messages\UserMessage($prompt)
-            );
-
-            \Log::info("ChangeAnalysisAgent: Received AI response");
-            $result = $this->parseResponse($response->getContent());
-
-            \Log::info("ChangeAnalysisAgent: Parsed result", $result);
-
-            return [
-                'should_regenerate' => $result['should_regenerate'] ?? true, // default true pro bezpečnost
-                'confidence' => $result['confidence'] ?? 0.5,
-                'reason' => $result['reason'] ?? 'unknown',
-                'reasoning' => $result['reasoning'] ?? [],
-                'change_summary' => $result['change_summary'] ?? [],
-                'semantic_score' => $result['semantic_score'] ?? 50,
-                'agent_response' => $response->getContent()
-            ];
-
-        } catch (Exception $e) {
-            \Log::error("ChangeAnalysisAgent error: " . $e->getMessage());
-            // V případě chyby raději regeneruj dokumentaci
-            return [
-                'should_regenerate' => true,
-                'confidence' => 0.0,
-                'reason' => 'analysis_error',
-                'reasoning' => ['Chyba při analýze změn: ' . $e->getMessage()],
-                'change_summary' => [],
-                'semantic_score' => 100,
-                'error' => $e->getMessage()
-            ];
-        }
-    }
-
-    /**
-     * Manuálně spustí Tools a vrátí jejich výsledky
-     */
-    private function runToolsManually(string $filePath, string $oldContent, string $newContent): array
-    {
-        $results = [];
-
-        try {
-            // 1. CodeDiffTool
-            $codeDiffTool = new \Digihood\Digidocs\Tools\CodeDiffAnalyzer();
-            $results['diff'] = $codeDiffTool($filePath, null, null, $oldContent, $newContent);
-        } catch (\Exception $e) {
-            $results['diff'] = ['status' => 'error', 'error' => $e->getMessage()];
-        }
-
-        try {
-            // 2. AstCompareTool
-            $astCompareTool = new \Digihood\Digidocs\Tools\AstComparer();
-            $results['ast'] = $astCompareTool($oldContent, $newContent, $filePath);
-        } catch (\Exception $e) {
-            $results['ast'] = ['status' => 'error', 'error' => $e->getMessage()];
-        }
-
-        try {
-            // 3. SemanticAnalysisTool
-            $semanticTool = new \Digihood\Digidocs\Tools\SemanticAnalyzer();
-            $results['semantic'] = $semanticTool(
-                json_encode($results['diff']),
-                json_encode($results['ast']),
-                $filePath
-            );
-        } catch (\Exception $e) {
-            $results['semantic'] = ['status' => 'error', 'error' => $e->getMessage()];
-        }
-
-        return $results;
-    }
-
-    /**
-     * Vytvoří prompt pro analýzu změn
-     */
-    private function buildAnalysisPrompt(string $filePath, string $oldContent, string $newContent): string
-    {
-        return "Analyzuj změny v PHP souboru a rozhodni, zda je potřeba regenerovat dokumentaci.
-
-**Soubor:** {$filePath}
-
-**Úkol:**
-Porovnej starý a nový obsah souboru a rozhodni, jestli je potřeba regenerovat dokumentaci.
-Máš k dispozici nástroje pro analýzu kódu - použij je podle potřeby.
-
-**Starý obsah:**
-```php
-{$oldContent}
-```
-
-**Nový obsah:**
-```php
-{$newContent}
-```
-
-**Očekávaný výstup:**
-Poskytni strukturovanou analýzu ve formátu:
-
-```json
-{
-    \"should_regenerate\": true/false,
-    \"confidence\": 0.0-1.0,
-    \"reason\": \"structural_changes|semantic_changes|cosmetic_only|formatting_only\",
-    \"reasoning\": [
-        \"Konkrétní důvod 1\",
-        \"Konkrétní důvod 2\"
-    ],
-    \"change_summary\": {
-        \"total_changes\": number,
-        \"change_types\": [\"array of change types\"],
-        \"severity\": \"major|minor|minimal|none\"
-    },
-    \"semantic_score\": 0-100
-}
-```
-
-**Kritéria pro rozhodování:**
-- Strukturální změny (nové/změněné třídy, metody, vlastnosti) → regeneruj
-- Sémantické změny (změny logiky, parametrů, návratových hodnot) → regeneruj
-- Změny v komentářích nebo docblocks → možná regeneruj
-- Pouze whitespace/formátování → neregeneruj
-- Změny v importech → zvažuj podle kontextu
-- Pokud si nejsi jistý → raději regeneruj
-
-Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
-    }
-
-    /**
-     * Parsuje odpověď agenta a extrahuje strukturovaná data
-     */
-    private function parseResponse(string $response): array
-    {
-        // Pokus o extrakci JSON z odpovědi
-        if (preg_match('/```json\s*(\{.*?\})\s*```/s', $response, $matches)) {
-            $jsonData = json_decode($matches[1], true);
-            if ($jsonData !== null) {
-                return $jsonData;
-            }
-        }
-
-        // Pokus o nalezení JSON bez markdown
-        if (preg_match('/\{.*\}/s', $response, $matches)) {
-            $jsonData = json_decode($matches[0], true);
-            if ($jsonData !== null) {
-                return $jsonData;
-            }
-        }
-
-        // Fallback parsing - hledej klíčová slova
-        $result = [
-            'should_regenerate' => true, // default true pro bezpečnost
-            'confidence' => 0.5,
-            'reason' => 'unknown',
-            'reasoning' => [],
-            'change_summary' => [],
-            'semantic_score' => 50
-        ];
-
-        // Hledej should_regenerate
-        if (preg_match('/should_regenerate["\']?\s*:\s*(true|false)/i', $response, $matches)) {
-            $result['should_regenerate'] = strtolower($matches[1]) === 'true';
-        } elseif (preg_match('/(neregeneruj|nepotřebuje|není potřeba|no need)/i', $response)) {
-            $result['should_regenerate'] = false;
-        } elseif (preg_match('/(regeneruj|potřebuje|je potřeba|need|update)/i', $response)) {
-            $result['should_regenerate'] = true;
-        }
-
-        // Hledej confidence
-        if (preg_match('/confidence["\']?\s*:\s*([0-9.]+)/i', $response, $matches)) {
-            $result['confidence'] = (float) $matches[1];
-        }
-
-        // Hledej semantic_score
-        if (preg_match('/semantic_score["\']?\s*:\s*([0-9]+)/i', $response, $matches)) {
-            $result['semantic_score'] = (int) $matches[1];
-        }
-
-        // Hledej reason
-        if (preg_match('/reason["\']?\s*:\s*["\']([^"\']+)["\']?/i', $response, $matches)) {
-            $result['reason'] = $matches[1];
-        }
-
-        // Extrahuj reasoning jako seznam řádků obsahujících důvody
-        $lines = explode("\n", $response);
-        $reasoning = [];
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if (preg_match('/^[-*•]\s*(.+)/', $line, $matches)) {
-                $reasoning[] = $matches[1];
-            } elseif (preg_match('/^\d+\.\s*(.+)/', $line, $matches)) {
-                $reasoning[] = $matches[1];
-            }
-        }
-
-        if (!empty($reasoning)) {
-            $result['reasoning'] = $reasoning;
-        } else {
-            $result['reasoning'] = ['Automaticky parsovaná odpověď z AI agenta'];
-        }
-
-        return $result;
-    }
-
-    /**
      * Generuje dokumentaci pomocí klasického DocumentationAgent
      */
     private function generateWithClassicAgent(string $filePath): string
@@ -533,156 +287,6 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
     }
 
     /**
-     * Analyzuje změny v souboru (původní metoda pro zpětnou kompatibilitu)
-     */
-    private function analyzeChanges(string $filePath, string $oldContent, string $newContent): array
-    {
-        // Rychlé kontroly
-        if ($oldContent === $newContent) {
-            return [
-                'should_regenerate' => false,
-                'confidence' => 1.0,
-                'reason' => 'identical_content',
-                'reasoning' => ['Obsah souboru je identický'],
-                'change_summary' => [],
-                'semantic_score' => 0
-            ];
-        }
-
-        if (empty(trim($oldContent))) {
-            return [
-                'should_regenerate' => true,
-                'confidence' => 1.0,
-                'reason' => 'new_file',
-                'reasoning' => ['Nový soubor vyžaduje dokumentaci'],
-                'change_summary' => [],
-                'semantic_score' => 100
-            ];
-        }
-
-        // Použij jednoduché heuristiky místo AI analýzy (rychlejší a spolehlivější)
-        return $this->simpleHeuristicAnalysis($filePath, $oldContent, $newContent);
-    }
-
-    /**
-     * Jednoduchá heuristická analýza bez AI
-     */
-    private function simpleHeuristicAnalysis(string $filePath, string $oldContent, string $newContent): array
-    {
-        $oldLines = explode("\n", $oldContent);
-        $newLines = explode("\n", $newContent);
-
-        $totalChanges = abs(count($newLines) - count($oldLines));
-
-        // Lepší kontrola whitespace změn - normalizuj všechny whitespace
-        $oldNormalized = $this->normalizeWhitespace($oldContent);
-        $newNormalized = $this->normalizeWhitespace($newContent);
-
-        if ($oldNormalized === $newNormalized) {
-            \Log::info("ChangeAnalysisAgent: Whitespace only changes detected for {$filePath}");
-            return [
-                'should_regenerate' => false,
-                'confidence' => 0.95,
-                'reason' => 'whitespace_only',
-                'reasoning' => ['Pouze změny v whitespace - dokumentace zůstává aktuální'],
-                'change_summary' => ['total_changes' => $totalChanges, 'severity' => 'minimal'],
-                'semantic_score' => 5
-            ];
-        }
-
-        // Lepší kontrola komentářů - odstraň všechny typy komentářů
-        $oldCodeOnly = $this->removeComments($oldContent);
-        $newCodeOnly = $this->removeComments($newContent);
-
-        // Normalizuj whitespace po odstranění komentářů
-        $oldCodeNormalized = $this->normalizeWhitespace($oldCodeOnly);
-        $newCodeNormalized = $this->normalizeWhitespace($newCodeOnly);
-
-        if ($oldCodeNormalized === $newCodeNormalized) {
-            \Log::info("ChangeAnalysisAgent: Comments only changes detected for {$filePath}");
-            return [
-                'should_regenerate' => false,
-                'confidence' => 0.85,
-                'reason' => 'comments_only',
-                'reasoning' => ['Pouze změny v komentářích - dokumentace zůstává aktuální'],
-                'change_summary' => ['total_changes' => $totalChanges, 'severity' => 'minor'],
-                'semantic_score' => 15
-            ];
-        }
-
-        // Kontrola strukturálních změn (třídy, metody, vlastnosti)
-        $hasStructuralChanges = $this->detectStructuralChanges($oldContent, $newContent);
-
-        if ($hasStructuralChanges) {
-            \Log::info("ChangeAnalysisAgent: Structural changes detected for {$filePath}");
-            return [
-                'should_regenerate' => true,
-                'confidence' => 0.9,
-                'reason' => 'structural_changes',
-                'reasoning' => ['Detekované strukturální změny (třídy, metody, vlastnosti)'],
-                'change_summary' => ['total_changes' => $totalChanges, 'severity' => 'major'],
-                'semantic_score' => 85
-            ];
-        }
-
-        // Malé změny v kódu
-        if ($totalChanges <= 3) {
-            \Log::info("ChangeAnalysisAgent: Minor code changes detected for {$filePath}");
-            return [
-                'should_regenerate' => true,
-                'confidence' => 0.6,
-                'reason' => 'minor_code_changes',
-                'reasoning' => ['Malé změny v kódu - pravděpodobně potřebná aktualizace dokumentace'],
-                'change_summary' => ['total_changes' => $totalChanges, 'severity' => 'minor'],
-                'semantic_score' => 40
-            ];
-        }
-
-        // Větší změny v kódu
-        \Log::info("ChangeAnalysisAgent: Major code changes detected for {$filePath}");
-        return [
-            'should_regenerate' => true,
-            'confidence' => 0.8,
-            'reason' => 'major_code_changes',
-            'reasoning' => ['Významné změny v kódu - nutná aktualizace dokumentace'],
-            'change_summary' => ['total_changes' => $totalChanges, 'severity' => 'major'],
-            'semantic_score' => 75
-        ];
-    }
-
-    /**
-     * Detekuje strukturální změny v PHP kódu
-     */
-    private function detectStructuralChanges(string $oldContent, string $newContent): bool
-    {
-        // Jednoduché regex patterns pro PHP struktury
-        $patterns = [
-            '/class\s+\w+/',
-            '/interface\s+\w+/',
-            '/trait\s+\w+/',
-            '/function\s+\w+\s*\(/',
-            '/public\s+function\s+\w+/',
-            '/private\s+function\s+\w+/',
-            '/protected\s+function\s+\w+/',
-            '/public\s+\$\w+/',
-            '/private\s+\$\w+/',
-            '/protected\s+\$\w+/',
-            '/const\s+\w+\s*=/',
-        ];
-
-        foreach ($patterns as $pattern) {
-            $oldMatches = preg_match_all($pattern, $oldContent);
-            $newMatches = preg_match_all($pattern, $newContent);
-
-            if ($oldMatches !== $newMatches) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Zaznamenej analýzu do databáze
      */
     private function recordAnalysis(string $filePath, array $analysis): void
@@ -701,33 +305,6 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
     }
 
     /**
-     * Rychlá analýza bez AI - pouze na základě hash porovnání
-     */
-    public function quickAnalysis(string $filePath, string $oldHash, string $newHash): array
-    {
-        if ($oldHash === $newHash) {
-            return [
-                'should_regenerate' => false,
-                'confidence' => 1.0,
-                'reason' => 'no_changes',
-                'reasoning' => ['Soubor se nezměnil (stejný hash)'],
-                'change_summary' => ['total_changes' => 0, 'severity' => 'none'],
-                'semantic_score' => 0
-            ];
-        }
-
-        // Pro rychlou analýzu - pokud se hash změnil, doporuč regeneraci
-        return [
-            'should_regenerate' => true,
-            'confidence' => 0.7,
-            'reason' => 'hash_changed',
-            'reasoning' => ['Hash souboru se změnil - potřebná detailní analýza'],
-            'change_summary' => ['total_changes' => 1, 'severity' => 'unknown'],
-            'semantic_score' => 50
-        ];
-    }
-
-    /**
      * Vylepšené heuristiky s kontextem dokumentace
      */
     private function advancedHeuristicAnalysis(
@@ -738,6 +315,18 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
         array $newStructure,
         ?array $existingDoc
     ): array {
+        // 0. Kontrola kosmetických změn (komentáře, whitespace)
+        if ($this->isOnlyCosmeticChange($oldContent, $newContent)) {
+            return [
+                'should_regenerate' => false,
+                'confidence' => 0.9,
+                'reason' => 'cosmetic_changes_only',
+                'reasoning' => ['Pouze kosmetické změny (komentáře, whitespace) - dokumentace zůstává aktuální'],
+                'change_summary' => ['severity' => 'minimal'],
+                'affected_sections' => []
+            ];
+        }
+
         // 1. Žádná dokumentace = vždy generuj
         if (!$existingDoc) {
             return [
@@ -1171,5 +760,38 @@ Buď konkrétní a uveď jasné důvody pro své rozhodnutí.";
         }
 
         return $affectedSections;
+    }
+
+    /**
+     * Zkontroluj zda jsou změny pouze kosmetické (komentáře, whitespace)
+     */
+    private function isOnlyCosmeticChange(string $oldContent, string $newContent): bool
+    {
+        // Odstraň komentáře a normalizuj whitespace
+        $oldNormalized = $this->normalizeCodeForComparison($oldContent);
+        $newNormalized = $this->normalizeCodeForComparison($newContent);
+
+        return $oldNormalized === $newNormalized;
+    }
+
+    /**
+     * Normalizuje kód pro porovnání - odstraní komentáře a whitespace
+     */
+    private function normalizeCodeForComparison(string $content): string
+    {
+        // Odstraň jednořádkové komentáře //
+        $content = preg_replace('/\/\/.*$/m', '', $content);
+
+        // Odstraň víceřádkové komentáře /* */
+        $content = preg_replace('/\/\*.*?\*\//s', '', $content);
+
+        // Odstraň DocBlock komentáře /** */
+        $content = preg_replace('/\/\*\*.*?\*\//s', '', $content);
+
+        // Normalizuj whitespace - odstraň nadbytečné mezery a prázdné řádky
+        $content = preg_replace('/\s+/', ' ', $content);
+        $content = trim($content);
+
+        return $content;
     }
 }
