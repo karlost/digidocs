@@ -1,25 +1,38 @@
 # Digidocs - AI-Powered Laravel Documentation Generator
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/karlost/digidocs)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/karlost/digidocs)
 [![Laravel](https://img.shields.io/badge/Laravel-10%2B-red.svg)](https://laravel.com)
 [![PHP](https://img.shields.io/badge/PHP-8.2%2B-purple.svg)](https://php.net)
 
-Digidocs is an advanced Laravel package for automatic PHP code documentation generation using artificial intelligence with the NeuronAI framework.
+Digidocs is an advanced Laravel package that automatically generates comprehensive documentation using AI. It creates both **developer documentation** (technical API docs) and **user documentation** (end-user guides) with intelligent change analysis and real-time Git monitoring.
 
 
 ## ✨ Key Features
 
-- 🤖 **AI-powered documentation** - Uses OpenAI/GPT-4 for generating high-quality documentation
-- 🧠 **Intelligent change analysis** - ChangeAnalysisAgent with advanced heuristics for regeneration decisions
-- 📋 **Documented parts tracking** - DocumentationAnalyzer tracks which parts of code are documented
-- 🔄 **Git commit monitoring** - Automatic Git commit tracking and processing only changed files
-- 👁️ **Real-time watch mode** - Continuous Git commit monitoring with automatic regeneration
-- 📊 **Semantic analysis** - Distinguishes between public API changes and private implementation details
-- 💾 **SQLite tracking** - Efficient tracking of file changes, commits, analyses and documented parts
-- 🛠️ **NeuronAI architecture** - Modular system with Agents and Tools
-- 🔍 **Laravel context** - Recognizes Controllers, Models, Commands, Services, etc.
-- ⚡ **Artisan commands** - Easy usage through CLI
-- 🎯 **Efficient processing** - Skip rate up to 19% thanks to intelligent analysis
+### 📚 Dual Documentation Types
+- 👨‍💻 **Developer Documentation** - Technical API docs for code maintainers
+- 👥 **User Documentation** - End-user guides for application users
+- 🧠 **Intelligent routing** - Automatically determines which type to generate
+
+### 🤖 AI-Powered Generation
+- 🤖 **Advanced AI models** - Uses OpenAI/GPT-4, Claude, Gemini, and more
+- 🧠 **Intelligent change analysis** - Separate agents for developer vs user impact
+- 📊 **Context-aware** - Understands Laravel patterns and user workflows
+
+### 🔄 Smart Change Detection
+- 🎯 **UserChangeAnalysisAgent** - Analyzes UI/UX impact for user docs
+- 🛠️ **ChangeAnalysisAgent** - Analyzes API changes for developer docs
+- 📋 **Documented parts tracking** - Tracks which code parts are documented
+- 🔄 **Git commit monitoring** - Processes only changed files
+
+### ⚡ Advanced Features
+- 👁️ **Real-time watch mode** - Continuous monitoring with automatic regeneration
+- 📊 **Semantic analysis** - Distinguishes between public API and private changes
+- 💾 **SQLite tracking** - Efficient tracking of changes, analyses and documentation
+- 🛠️ **NeuronAI architecture** - Modular system with specialized Agents and Tools
+- 🔍 **Laravel context** - Recognizes Controllers, Models, Blade templates, Routes
+- 💰 **Cost tracking** - Detailed token usage and cost statistics
+- 🎯 **High efficiency** - Skip rate up to 85% thanks to intelligent analysis
 
 ## 🚀 Installation
 
@@ -39,23 +52,19 @@ AUTODOCS_AI_KEY=your-openai-api-key
 
 ## 📋 Usage
 
-### 🔄 Automatic Documentation Generation
-
-**Main command** - Processes only files changed in Git commits with intelligent analysis:
+### �‍💻 Developer Documentation (Technical API Docs)
 
 ```bash
-# Process only files changed in Git commits since last run
-php artisan digidocs:autodocs
-
-# Force regeneration even for unchanged files
-php artisan digidocs:autodocs --force
-
-# Dry run - shows what would be processed
-php artisan digidocs:autodocs --dry-run
-
-# Process specific paths
-php artisan digidocs:autodocs --path=app/Models --path=app/Services
+php artisan digidocs:autodocs [options]
 ```
+
+**Available options:**
+- `--force` - Force regeneration even for unchanged files
+- `--dry-run` - Show what would be processed without generating
+- `--path=PATH` - Process specific paths (can be used multiple times)
+- `--stats` - Show documentation statistics
+- `--cost` - Show token usage and cost statistics
+- `--cleanup` - Clean database from non-existent files
 
 **Intelligent analysis:**
 - 🧠 **ChangeAnalysisAgent** decides whether to regenerate documentation
@@ -63,85 +72,63 @@ php artisan digidocs:autodocs --path=app/Models --path=app/Services
 - ⏭️ **Private changes/whitespace** → Skips regeneration
 - 📊 **Tracks documented parts** of code for more precise decisions
 
-### Management and Statistics
+### 👥 User Documentation (End-User Guides)
 
 ```bash
-# Show documentation and intelligent analysis statistics
-php artisan digidocs:autodocs --stats
-
-# Show cost and token statistics
-php artisan digidocs:autodocs --cost
-
-# Clean database from non-existent files
-php artisan digidocs:autodocs --cleanup
+php artisan digidocs:userdocs [options]
 ```
+
+**Available options:**
+- `--force` - Force regeneration of all user documentation
+- `--dry-run` - Show what would be processed without generating
+- `--stats` - Show documentation statistics
+- `--cost` - Show token usage and cost statistics
+
+**User documentation features:**
+- 🎯 **UserChangeAnalysisAgent** - Analyzes changes from user perspective
+- 🖥️ **UI/UX focus** - Prioritizes Blade templates, routes, and user-facing changes
+- 📱 **Application-level docs** - Generates structured guides with sections
+- 🔄 **Smart regeneration** - Only updates when user experience is affected
+- 📊 **Impact scoring** - Rates changes by user impact (0-100)
+- 📂 **Section-based organization** - Organizes content by user workflows
+- 🔗 **Cross-references** - Links between related sections
 
 ### 👁️ Watch Mode - Real-time Git Commit Monitoring
 
-For continuous real-time change monitoring use watch mode with intelligent analysis:
-
 ```bash
-# Start watch mode - monitors Git commits in real-time
-php artisan digidocs:watch
-
-# Set check interval (default 5 seconds)
-php artisan digidocs:watch --interval=10
-
-# Watch specific paths
-php artisan digidocs:watch --path=app/Models --path=app/Services
+php artisan digidocs:watch [options]
 ```
 
-**Watch mode:**
-- 🔄 Monitors Git commits in real-time (every 5 seconds)
-- 🧠 Uses the same intelligent analysis as `autodocs`
-- 🛑 Graceful shutdown using Ctrl+C
+**Available options:**
+- `--interval=SECONDS` - Check interval in seconds (default: 5)
+- `--path=PATH` - Specific paths to watch (can be used multiple times)
+- `--code-only` - Generate only developer documentation
+- `--user-only` - Generate only user documentation
 
-**Difference between modes:**
-- **`autodocs`** - One-time execution, processes Git commits since last run
-- **`watch`** - Continuous monitoring, automatically processes new Git commits
+**Watch mode features:**
+- 🔄 **Real-time monitoring** - Monitors Git commits continuously
+- 🧠 **Intelligent analysis** - Separate agents for dev vs user docs
+- 🎯 **Smart filtering** - Only processes relevant changes
+- 🛑 **Graceful shutdown** - Ctrl+C for clean exit
+- 📚 **Unified processing** - Both documentation types in one command
 
-**Output includes:**
-- 📊 **Overall statistics** - call count, tokens, costs
-- 🤖 **Model-specific statistics** - details for each AI model used
-- 📅 **Recent activity** - consumption for the last 7 days
-- 💰 **Current prices** - model prices per 1M tokens
+## 🤖 Supported AI Providers
 
-**Supported AI providers:**
-- ✅ **OpenAI** - GPT-4.1, GPT-4o, GPT-4, GPT-3.5, O3, O4-mini
-- ✅ **Anthropic** - Claude 4, Claude 3.7, Claude 3.5, Claude 3
-- ✅ **Gemini** - Gemini 1.5 Pro/Flash, Gemini 2.0 Flash
-- ✅ **Deepseek** - Deepseek Chat/Coder
-- ✅ **Mistral** - Mistral Large/Medium/Small
-- ✅ **Ollama** - Local models (free)
+**Tested and verified:**
+- ✅ **OpenAI GPT-4.1 Nano** - Fully tested and optimized (recommended)
 
-**Price configuration:**
-Model prices are configurable in `config/digidocs/pricing.php` and automatically update according to official provider prices.
+**Supported but not extensively tested:**
+- 🔶 **OpenAI** - GPT-4o, GPT-4, GPT-3.5, O3, O4-mini
+- 🔶 **Anthropic** - Claude 4, Claude 3.7, Claude 3.5, Claude 3
+- 🔶 **Gemini** - Gemini 1.5 Pro/Flash, Gemini 2.0 Flash
+- 🔶 **Deepseek** - Deepseek Chat/Coder
+- 🔶 **Mistral** - Mistral Large/Medium/Small
+- 🔶 **Ollama** - Local models (free)
 
-## 🐛 Troubleshooting
+**Note:** All testing was performed with GPT-4.1 Nano model. Other providers are supported through NeuronAI framework but may require additional configuration or testing.
 
-### Basic Issues
-```bash
-# Check API key and configuration
-php artisan config:cache
-
-# Test without generating documentation
-php artisan digidocs:autodocs --dry-run
-
-# Show statistics and status
-php artisan digidocs:autodocs --stats
-
-# Clean database from non-existent files
-php artisan digidocs:autodocs --cleanup
-```
-
-### Git Issues
-```bash
-# Make sure you're in a Git repository
-git status
-
-# Force processing of current commit
-php artisan digidocs:autodocs --force
-```
+**Automatic pricing:**
+Model prices are configurable in `config/digidocs/pricing.php`.
 
 ## 💡 Quick Start
 
@@ -153,30 +140,84 @@ php artisan vendor:publish --tag=digidocs-config
 # 2. Set API key in .env
 AUTODOCS_AI_KEY=your-openai-api-key
 
-# 3. Generate documentation for changed files
-php artisan digidocs:autodocs
+# 3. Generate documentation
+php artisan digidocs:autodocs              # Developer documentation
+php artisan digidocs:userdocs              # User documentation
+php artisan digidocs:watch                 # Watch mode for both types
 
-# 4. Or start watch mode for automatic monitoring
-php artisan digidocs:watch
+# 4. View statistics and costs
+php artisan digidocs:autodocs --stats --cost
 ```
 
-### Intelligent Analysis in Action
+## 🧠 Intelligent Analysis Examples
 
-```bash
-# Private changes are skipped
-git commit -m "refactor: improve private method"
-# → "⏭️ Skipped (no significant changes)"
+**Developer documentation:**
+- ⏭️ **Private changes** → Skipped (no significant changes)
+- ✅ **Public API changes** → Generated documentation
 
-# Public API changes are processed
-git commit -m "feat: add public getData method"
-# → "✅ Generated: docs/code/Models/User.md"
-```
+**User documentation:**
+- ⏭️ **Backend changes** → Skipped (low user impact)
+- ✅ **UI/UX changes** → Updated relevant sections
 
-## 📊 Example Output
+## 📊 Documentation Quality
 
-Generates structured Markdown documentation with:
+### 👨‍💻 Developer Documentation
+Generates comprehensive technical documentation with:
 - **File overview** and its purpose
-- **API documentation** - public methods and properties
-- **Laravel context** - relationships, scopes, etc.
-- **Usage examples** with code examples
+- **Complete API documentation** - all public methods and properties
+- **Laravel context** - relationships, scopes, middleware, etc.
+- **Practical usage examples** with working code
+- **Dependencies and relationships** - clear integration points
+
+### 👥 User Documentation
+Creates user-friendly application guides with:
+- **Application overview** - what the app does for users
+- **Feature sections** - organized by user workflows
+- **Step-by-step guides** - how to accomplish tasks
+- **Cross-referenced sections** - linked content organization
+- **User-focused language** - non-technical explanations
+
+## 📁 Output Structure
+
+**Developer documentation:**
+```
+docs/code/
+├── Http/
+│   ├── Controllers/
+│   ├── Middleware/
+│   └── ...
+├── Models/
+├── Services/
+├── config/
+└── routes/
+```
+
+**User documentation:**
+```
+docs/user/
+├── index.md              # Main application guide
+└── sections/
+    ├── uživatelské-rozhraní.md
+    ├── navigace.md
+    ├── formuláře.md
+    ├── funkcionality.md
+    └── ...
+```
+
+
+
+## 📈 Performance & Testing
+
+**Proven efficiency:**
+- ⚡ **56.5% skip rate** - Intelligent analysis avoids unnecessary regeneration
+- 🎯 **90.5% average confidence** - High-quality analysis decisions
+- 💰 **Cost-effective** - Only ~$0.26 for 350 API calls and 2M+ tokens
+- 🚀 **Real-time processing** - Watch mode with instant Git commit detection
+
+**Comprehensive testing:**
+- ✅ **21 documented files** across Models, Controllers, Services, Middleware
+- ✅ **Complex commits** with multiple file types and changes
+- ✅ **Watch mode** tested with real-time Git monitoring
+- ✅ **Both documentation types** verified for quality and accuracy
+- ✅ **Cost tracking** validated for precise token and pricing calculations
 

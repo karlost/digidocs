@@ -1,10 +1,10 @@
 {
     "name": "karlost/digidocs",
-    "description": "AI-powered Laravel documentation generator with NeuronAI integration",
-    "version": "0.1.2",
+    "description": "AI-powered Laravel documentation generator with dual documentation types (developer + user) and intelligent change analysis",
+    "version": "0.2.0",
     "type": "library",
     "license": "MIT",
-    "keywords": ["laravel", "documentation", "ai", "neuronai", "php", "generator"],
+    "keywords": ["laravel", "documentation", "ai", "neuronai", "php", "generator", "user-docs", "developer-docs", "intelligent-analysis"],
     "homepage": "https://github.com/karlost/digidocs",
     "authors": [
         {
