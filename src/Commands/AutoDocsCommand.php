@@ -9,16 +9,21 @@ use Digihood\Digidocs\Agent\DocumentationAgent;
 use Digihood\Digidocs\Agent\ChangeAnalysisAgent;
 use Digihood\Digidocs\Services\GitWatcherService;
 use Digihood\Digidocs\Services\CostTracker;
+use Digihood\Digidocs\Services\CodeDocumentationMemory;
+use Digihood\Digidocs\Services\SimpleLanguageHelper;
 use Exception;
 
 class AutoDocsCommand extends Command
 {
     protected $signature = 'digidocs:autodocs {--force : Force regeneration of all documentation}
+                                    {--all : Process all PHP files in watched paths, not just Git changes}
                                     {--dry-run : Show what would be processed without generating documentation}
                                     {--cleanup : Clean up memory database from non-existent files}
                                     {--stats : Show documentation statistics}
                                     {--cost : Show token usage and cost statistics}
-                                    {--path=* : Specific paths to process}';
+                                    {--path=* : Specific paths to process}
+                                    {--language= : Generate documentation for specific language (cs, en, sk)}
+                                    {--all-languages : Generate documentation for all enabled languages}';
 
     protected $description = 'Generate documentation using AI agent for PHP files changed in Git commits';
 
@@ -27,18 +32,26 @@ class AutoDocsCommand extends Command
         private DocumentationAgent $agent,
         private ChangeAnalysisAgent $changeAgent,
         private GitWatcherService $gitWatcher,
-        private CostTracker $costTracker
+        private CostTracker $costTracker,
+        private CodeDocumentationMemory $codeMemory,
+        private SimpleLanguageHelper $languageService
     ) {
         parent::__construct();
 
         // Nastaví cost tracking pro agenty
         $this->agent->setCostTracker($this->costTracker);
         $this->changeAgent->setCostTracker($this->costTracker);
+        
+        // Nastaví memory pro DocumentationAgent
+        $this->agent->setMemory($this->codeMemory);
     }
 
     public function handle(): int
     {
         $this->info('🤖 AutoDocs AI Agent - Starting...');
+
+        // Nastav jazykové prostředí
+        $this->setupLanguageEnvironment();
 
         // Statistiky
         if ($this->option('stats')) {
@@ -65,17 +78,26 @@ class AutoDocsCommand extends Command
         $files = $this->getFilesToProcess();
 
         if (empty($files)) {
-            $this->info('📭 No changed PHP files found in recent Git commits.');
+            $message = $this->option('all') 
+                ? '📭 No PHP files found in watched paths.'
+                : '📭 No changed PHP files found in recent Git commits.';
+            $this->info($message);
             return 0;
         }
 
-        $this->line("📋 Found " . count($files) . " PHP files to check (mode: Git changes)");
+        $mode = $this->option('all') ? 'All files' : 'Git changes';
+        $this->line("📋 Found " . count($files) . " PHP files to check (mode: {$mode})");
 
         $processed = 0;
         $skipped = 0;
         $errors = 0;
 
-        foreach ($files as $filePath) {
+        // Použij progress bar pokud není dry-run
+        if (!$this->option('dry-run') && count($files) > 1) {
+            $this->output->progressStart(count($files));
+        }
+
+        foreach ($files as $index => $filePath) {
             $result = $this->processFile($filePath);
 
             switch ($result) {
@@ -89,6 +111,16 @@ class AutoDocsCommand extends Command
                     $errors++;
                     break;
             }
+            
+            // Aktualizuj progress bar
+            if (!$this->option('dry-run') && count($files) > 1) {
+                $this->output->progressAdvance();
+            }
+        }
+        
+        // Ukonči progress bar
+        if (!$this->option('dry-run') && count($files) > 1) {
+            $this->output->progressFinish();
         }
 
         // Shrnutí
@@ -104,7 +136,16 @@ class AutoDocsCommand extends Command
      */
     private function processFile(string $filePath): string
     {
-        $this->line("📄 Processing: {$filePath}");
+        // Zobraz zprávu pouze když není progress bar
+        static $filesCount = null;
+        if ($filesCount === null) {
+            $filesCount = count($this->getFilesToProcess());
+        }
+        $showOutput = $this->option('dry-run') || $filesCount <= 1;
+        
+        if ($showOutput) {
+            $this->line("📄 Processing: {$filePath}");
+        }
 
         try {
             // Převeď absolutní cestu na relativní
@@ -112,37 +153,91 @@ class AutoDocsCommand extends Command
             $relativePath = str_replace('\\', '/', $relativePath);
 
             if ($this->option('dry-run')) {
-                $this->line("   🔍 Would process with ChangeAnalysisAgent");
+                if ($showOutput) {
+                    $this->line("   🔍 Would process with ChangeAnalysisAgent");
+                }
                 return 'processed';
             }
 
-            // Použij ChangeAnalysisAgent pro inteligentní rozhodování s retry logikou
-            $documentation = $this->generateDocumentationWithRetry($relativePath);
+            // Zkontroluj zda je potřeba generovat dokumentaci
+            $shouldGenerate = $this->shouldGenerateDocumentationWithRetry($relativePath);
 
-            if ($documentation === null) {
-                $this->line("   ⏭️  Skipped (no significant changes)");
+            if (!$shouldGenerate) {
+                if ($showOutput) {
+                    $this->line("   ⏭️  Skipped (no significant changes)");
+                }
                 return 'skipped';
             }
 
-            // Ulož dokumentaci
-            $docPath = $this->saveDocumentation($relativePath, $documentation);
+            // Generuj dokumentaci pro vybrané jazyky
+            $results = $this->generateDocumentationForAllLanguages($relativePath);
 
-            // NOVÉ: Zaznamenej dokumentované části kódu
-            $this->recordDocumentedCodeParts($relativePath, $documentation);
-
-            // Zaznamenej do memory pouze pokud se vše podařilo
+            // Získej hash souboru
             $currentHash = hash_file('sha256', base_path($relativePath));
-            $this->memory->recordDocumentation(
-                $relativePath,
-                $currentHash,
-                $docPath
-            );
+            
+            // Získej strukturu kódu pro metadata
+            $codeStructure = $this->extractCodeStructure($relativePath);
 
-            $this->line("   ✅ Generated: {$docPath}");
-            return 'processed';
+            $generatedPaths = [];
+            $hasErrors = false;
+
+            // Zpracuj výsledky pro každý jazyk
+            foreach ($results as $language => $result) {
+                if ($result['success']) {
+                    // Ulož dokumentaci
+                    $docPath = $this->saveDocumentationForLanguage($relativePath, $result['content'], $language);
+                    $generatedPaths[$language] = $docPath;
+
+                    // NOVÉ: Zaznamenej dokumentované části kódu (pouze pro první jazyk)
+                    if (count($generatedPaths) === 1) {
+                        $this->recordDocumentedCodeParts($relativePath, $result['content']);
+                    }
+                    
+                    // Ulož dokumentaci do RAG systému
+                    $this->codeMemory->storeCodeDocumentation(
+                        $relativePath,
+                        $currentHash,
+                        $docPath,
+                        $result['content'],
+                        $codeStructure
+                    );
+
+                    // Zaznamenej do memory (použij hlavní cestu z prvního jazyka)
+                    if (count($generatedPaths) === 1) {
+                        $this->memory->recordDocumentation(
+                            $relativePath,
+                            $currentHash,
+                            $docPath
+                        );
+                    }
+                } else {
+                    $hasErrors = true;
+                    if ($showOutput) {
+                        $this->line("   ❌ Error generating {$language}: {$result['error']}");
+                    }
+                }
+            }
+
+            if ($showOutput) {
+                if (!empty($generatedPaths)) {
+                    if (count($generatedPaths) === 1) {
+                        $path = array_values($generatedPaths)[0];
+                        $this->line("   ✅ Generated: {$path}");
+                    } else {
+                        $this->line("   ✅ Generated in " . count($generatedPaths) . " languages:");
+                        foreach ($generatedPaths as $lang => $path) {
+                            $this->line("      • {$lang}: {$path}");
+                        }
+                    }
+                }
+            }
+
+            return $hasErrors ? 'error' : 'processed';
 
         } catch (Exception $e) {
-            $this->line("   ❌ Failed: " . $e->getMessage());
+            if ($showOutput) {
+                $this->line("   ❌ Failed: " . $e->getMessage());
+            }
             return 'error';
         }
     }
@@ -150,7 +245,10 @@ class AutoDocsCommand extends Command
     /**
      * Generuje dokumentaci s retry logikou pro 429 chyby
      */
-    private function generateDocumentationWithRetry(string $relativePath): ?string
+    /**
+     * Zkontroluj zda je potřeba generovat dokumentaci s retry logikou
+     */
+    private function shouldGenerateDocumentationWithRetry(string $relativePath): bool
     {
         $maxRetries = 3;
         $retryDelays = [10, 30, 60]; // sekundy
@@ -158,7 +256,6 @@ class AutoDocsCommand extends Command
         for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
             try {
                 // KLÍČOVÁ OPRAVA: Vytvoř novou instanci agenta pro každý pokus
-                // Tím se vyčistí stav konverzace a vyřeší se problém s Tools
                 $changeAgent = new \Digihood\Digidocs\Agent\ChangeAnalysisAgent();
 
                 // Nastav cost tracker pokud je dostupný
@@ -166,7 +263,8 @@ class AutoDocsCommand extends Command
                     $changeAgent->setCostTracker($this->costTracker);
                 }
 
-                return $changeAgent->generateDocumentationIfNeeded($relativePath);
+                $result = $changeAgent->generateDocumentationIfNeeded($relativePath);
+                return $result !== null;
             } catch (\Exception $e) {
                 // Zkontroluj jestli je to retryable chyba
                 if ($this->isRetryableError($e)) {
@@ -190,8 +288,49 @@ class AutoDocsCommand extends Command
             }
         }
 
-        return null;
+        return false;
     }
+
+    /**
+     * Generuj dokumentaci pro všechny vybrané jazyky
+     */
+    private function generateDocumentationForAllLanguages(string $relativePath): array
+    {
+        if ($this->languageService->shouldGenerateAll()) {
+            return $this->agent->generateDocumentationForFileInAllLanguages($relativePath);
+        } else {
+            $language = $this->languageService->getCurrentLanguage();
+            $content = $this->agent->generateDocumentationForFileInLanguage($relativePath, $language);
+            return [
+                $language => [
+                    'success' => true,
+                    'content' => $content,
+                    'file_path' => $this->languageService->convertFileToDocPath($relativePath, $language),
+                    'language' => $language
+                ]
+            ];
+        }
+    }
+
+    /**
+     * Ulož dokumentaci pro konkrétní jazyk
+     */
+    private function saveDocumentationForLanguage(string $filePath, string $documentation, string $language): string
+    {
+        $docPath = $this->languageService->convertFileToDocPath($filePath, $language);
+
+        // Zajisti existenci adresáře
+        $directory = dirname($docPath);
+        if (!File::exists($directory)) {
+            File::makeDirectory($directory, 0755, true);
+        }
+
+        // Ulož dokumentaci
+        File::put($docPath, $documentation);
+
+        return str_replace(base_path() . '/', '', $docPath);
+    }
+
 
     /**
      * Zkontroluje jestli je chyba retryable (rate limit nebo tool message chyby)
@@ -419,10 +558,67 @@ class AutoDocsCommand extends Command
     }
 
     /**
+     * Extrahuje strukturu kódu pro RAG metadata
+     */
+    private function extractCodeStructure(string $filePath): array
+    {
+        try {
+            $documentationAnalyzer = new \Digihood\Digidocs\Services\DocumentationAnalyzer();
+            $content = file_get_contents(base_path($filePath));
+            
+            if (!$content) {
+                return [];
+            }
+            
+            $structure = $documentationAnalyzer->parseCodeStructure($content);
+            
+            // Přidej další metadata
+            $structure['line_count'] = substr_count($content, "\n") + 1;
+            $structure['namespace'] = $this->extractNamespace($content);
+            $structure['uses'] = $this->extractUses($content);
+            
+            return $structure;
+        } catch (\Exception $e) {
+            \Log::warning("Failed to extract code structure for {$filePath}: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    /**
+     * Extrahuje namespace ze souboru
+     */
+    private function extractNamespace(string $content): ?string
+    {
+        if (preg_match('/namespace\s+([^;]+);/', $content, $matches)) {
+            return trim($matches[1]);
+        }
+        return null;
+    }
+    
+    /**
+     * Extrahuje use statements ze souboru
+     */
+    private function extractUses(string $content): array
+    {
+        $uses = [];
+        if (preg_match_all('/use\s+([^;]+);/', $content, $matches)) {
+            foreach ($matches[1] as $use) {
+                $uses[] = trim($use);
+            }
+        }
+        return $uses;
+    }
+
+    /**
      * Získá seznam souborů k zpracování
      */
     private function getFilesToProcess(): array
     {
+        // Pokud je použit --all flag, zpracuj všechny PHP soubory
+        if ($this->option('all')) {
+            return $this->getAllPhpFiles();
+        }
+        
         return $this->getGitChangedFiles();
     }
 
@@ -651,6 +847,17 @@ class AutoDocsCommand extends Command
         $this->line("Total documented files: {$stats['total_files']}");
         $this->line("Files updated in last 7 days: {$stats['recent_updates']}");
 
+        // Statistiky podle jazyků
+        $languageStats = $this->languageService->getDocumentationStats();
+        if (count($languageStats['languages']) > 1) {
+            $this->newLine();
+            $this->info('🌍 Documentation Languages');
+            foreach ($languageStats['by_language'] as $lang => $langStats) {
+                $this->line("  {$langStats['name']} ({$lang}): {$langStats['total_files']} files ({$langStats['code_files']} code, {$langStats['user_files']} user)");
+            }
+            $this->line("Total across all languages: {$languageStats['total_files']} files");
+        }
+
         // Statistiky inteligentní analýzy
         if (isset($stats['analysis_enabled']) && $stats['analysis_enabled']) {
             $this->newLine();
@@ -750,5 +957,132 @@ class AutoDocsCommand extends Command
         }
 
         return 0;
+    }
+    
+    /**
+     * Získá všechny PHP soubory ve sledovaných cestách
+     */
+    private function getAllPhpFiles(): array
+    {
+        $watchPaths = $this->option('path') ?: config('digidocs.paths.watch', ['app/']);
+        $files = [];
+        
+        $this->line("🔍 Scanning for all PHP files in watched paths...");
+        
+        foreach ($watchPaths as $path) {
+            $fullPath = base_path($path);
+            if (!File::exists($fullPath)) {
+                continue;
+            }
+            
+            // Pokud je to soubor, přidej ho přímo
+            if (is_file($fullPath)) {
+                if (pathinfo($fullPath, PATHINFO_EXTENSION) === 'php') {
+                    $relativePath = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $fullPath);
+                    $relativePath = str_replace('\\', '/', $relativePath);
+                    
+                    if (!$this->shouldExcludeFile($relativePath)) {
+                        $files[] = $relativePath;
+                    }
+                }
+                continue;
+            }
+            
+            // Použij rekurzivní iterátor pro procházení složek
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($fullPath, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile() && $file->getExtension() === 'php') {
+                    $relativePath = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $file->getPathname());
+                    $relativePath = str_replace('\\', '/', $relativePath);
+                    
+                    // Filtruj podle exclude patterns
+                    if (!$this->shouldExcludeFile($relativePath)) {
+                        $files[] = $relativePath;
+                    }
+                }
+            }
+        }
+        
+        $this->line("📊 Found " . count($files) . " PHP files in total");
+        
+        return array_unique($files);
+    }
+    
+    /**
+     * Zkontroluje, zda by měl být soubor vyloučen
+     */
+    private function shouldExcludeFile(string $filePath): bool
+    {
+        $excludePatterns = config('digidocs.paths.exclude', [
+            '**/vendor/**',
+            '**/node_modules/**',
+            '**/tests/**',
+            '**/test/**',
+            '**/*.blade.php',
+            '**/migrations/**',
+            '**/seeders/**',
+            '**/factories/**'
+        ]);
+        
+        foreach ($excludePatterns as $pattern) {
+            if (fnmatch($pattern, $filePath)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Nastav jazykové prostředí pro generování dokumentace
+     */
+    private function setupLanguageEnvironment(): void
+    {
+        // Pokud je specifikován konkrétní jazyk (pouze pro debug/test)
+        if ($language = $this->option('language')) {
+            if (!$this->languageService->isLanguageEnabled($language)) {
+                $available = implode(', ', $this->languageService->getEnabledLanguages());
+                $this->error("Language '{$language}' is not enabled. Available: {$available}");
+                exit(1);
+            }
+            $this->languageService->setCurrentLanguage($language);
+            // Pro debug účely: pokud je specifikován konkrétní jazyk, negeneruj všechny
+            $this->languageService->setGenerateAll(false);
+            $this->info("🌍 Debug mode - using single language: {$language}");
+        } else {
+            // Normální režim - automatické rozhodování podle konfigurace
+            $languages = $this->languageService->getLanguagesToGenerate();
+            if (count($languages) > 1) {
+                $languagesList = implode(', ', $languages);
+                $this->info("🌍 Generating documentation for all configured languages: {$languagesList}");
+            } else {
+                $this->info("🌍 Generating documentation in: {$languages[0]}");
+            }
+        }
+
+        // Pokud je explicitně žádáno všechny jazyky
+        if ($this->option('all-languages')) {
+            $this->languageService->setGenerateAll(true);
+            $languages = implode(', ', $this->languageService->getEnabledLanguages());
+            $this->info("🌍 Forced generation for all languages: {$languages}");
+        }
+
+        // Zajisti existenci adresářové struktury
+        $this->languageService->ensureDirectoryStructure();
+
+        // Pokud máme více jazyků, migruj existující dokumentaci
+        if (count($this->languageService->getEnabledLanguages()) > 1) {
+            $migrated = $this->languageService->migrateExistingDocumentation();
+            if (!empty($migrated)) {
+                $this->info("📁 Migrated existing documentation:");
+                foreach ($migrated as $migration) {
+                    $this->line("  • {$migration}");
+                }
+            }
+        }
     }
 }

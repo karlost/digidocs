@@ -6,47 +6,46 @@ return [
     | Digidocs Configuration
     |--------------------------------------------------------------------------
     |
-    | Zde můžete nakonfigurovat základní nastavení pro Digidocs package.
+    | Simple configuration for DigiDocs AI documentation generator
     |
     */
 
-    // Základní nastavení pro package
     'enabled' => true,
-
-    // Prefix pro databázové tabulky
-    'table_prefix' => 'digidocs_',
-
-    // Cache nastavení
-    'cache' => [
-        'enabled' => true,
-        'ttl' => 3600, // 1 hodina
-    ],
 
     /*
     |--------------------------------------------------------------------------
     | AI Configuration
     |--------------------------------------------------------------------------
-    |
-    | Nastavení pro AI dokumentaci generování
-    |
     */
     'ai' => [
-        'provider' => 'openai',
         'api_key' => env('AUTODOCS_AI_KEY'),
         'model' => env('AUTODOCS_AI_MODEL', 'gpt-4'),
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Paths Configuration
+    | Languages Configuration
     |--------------------------------------------------------------------------
     |
-    | Cesty pro sledování souborů a ukládání dokumentace
+    | Configure languages for documentation generation using ISO format
+    | Examples: cs-CZ, en-US, ja-JP, de-DE, pt-BR, zh-CN, etc.
+    | AI will automatically recognize the ISO language code
     |
+    */
+    'languages' => [
+        'enabled' => explode(',', env('DIGIDOCS_LANGUAGES', 'cs-CZ,en-US,pl-PL')),
+        'default' => env('DIGIDOCS_DEFAULT_LANGUAGE', 'cs-CZ'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Paths Configuration
+    |--------------------------------------------------------------------------
     */
     'paths' => [
         'watch' => ['app/', 'routes/'],
-        'docs' => base_path('docs/code'),
+        'docs' => base_path('docs'),
+        'user_docs' => base_path('docs/user'),
         'memory' => storage_path('app/autodocs'),
     ],
 
@@ -54,9 +53,6 @@ return [
     |--------------------------------------------------------------------------
     | File Processing
     |--------------------------------------------------------------------------
-    |
-    | Nastavení pro zpracování souborů
-    |
     */
     'processing' => [
         'extensions' => ['php'],
@@ -66,34 +62,85 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Watch Configuration
+    | RAG Configuration
     |--------------------------------------------------------------------------
-    |
-    | Nastavení pro sledování změn a automatické generování dokumentace
-    |
     */
-    'watch' => [
-        'enabled' => env('AUTODOCS_WATCH_ENABLED', true),
-        'interval' => env('AUTODOCS_WATCH_INTERVAL', 5), // seconds
-        'git_only' => env('AUTODOCS_WATCH_GIT_ONLY', false),
-        'files_only' => env('AUTODOCS_WATCH_FILES_ONLY', false),
-        'auto_commit_hook' => env('AUTODOCS_AUTO_COMMIT_HOOK', false),
+    'rag' => [
+        'enabled' => true,
+        
+        'embeddings' => [
+            'provider' => 'openai',
+            'model' => 'text-embedding-3-small',
+            'dimensions' => 1024,
+        ],
+        
+        'vector_store' => [
+            'type' => 'file',
+            'path' => storage_path('app/autodocs/vectors'),
+            'top_k' => 10,
+        ],
+        
+        'chunking' => [
+            'strategy' => 'semantic',
+            'max_chunk_size' => 1000,
+            'overlap' => 100,
+        ],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Intelligent Analysis Configuration
+    | User Documentation Structure
     |--------------------------------------------------------------------------
-    |
-    | Nastavení pro inteligentní analýzu změn a rozhodování o regeneraci dokumentace
-    |
     */
-    'intelligent_analysis' => [
-        'enabled' => env('AUTODOCS_INTELLIGENT_ANALYSIS', true),
-        'fallback_to_classic' => env('AUTODOCS_FALLBACK_TO_CLASSIC', true),
-        'track_documented_parts' => env('AUTODOCS_TRACK_DOCUMENTED_PARTS', true),
-        'min_confidence_threshold' => env('AUTODOCS_MIN_CONFIDENCE', 0.7),
-        'skip_private_changes' => env('AUTODOCS_SKIP_PRIVATE_CHANGES', true),
-        'force_regenerate_on_public_api_changes' => env('AUTODOCS_FORCE_PUBLIC_API', true),
+    'user_documentation' => [
+        'enabled' => true,
+        
+        'structure' => [
+            'main_sections' => [
+                'getting-started',
+                'features', 
+                'guides',
+                'troubleshooting',
+                'reference'
+            ],
+            
+            'auto_generate' => [
+                'index' => true,
+                'navigation' => true,
+                'breadcrumbs' => true,
+                'cross_references' => true,
+                'glossary' => true,
+            ],
+        ],
+        
+        'formatting' => [
+            'tone' => 'friendly',
+            'technical_level' => 'beginner',
+            'include_examples' => true,
+            'include_screenshots' => false,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Change Detection
+    |--------------------------------------------------------------------------
+    */
+    'change_detection' => [
+        'enabled' => true,
+        'smart_analysis' => true,
+        'min_change_threshold' => 0.1,
+        'cache_ttl' => 3600,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cost Tracking
+    |--------------------------------------------------------------------------
+    */
+    'cost_tracking' => [
+        'enabled' => true,
+        'daily_limit' => 10.0, // USD
+        'warn_threshold' => 0.8,
     ],
 ];

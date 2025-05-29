@@ -489,4 +489,115 @@ class DocumentationAnalyzer
         // Poslední možnost - vrať název třídy
         return get_class($type);
     }
+
+    /**
+     * Analyzuj existující user dokumentaci pro soubor
+     */
+    public function analyzeExistingUserDocumentation(string $filePath): ?array
+    {
+        $userDocPath = $this->getUserDocumentationPath($filePath);
+
+        if (!file_exists($userDocPath)) {
+            return null;
+        }
+
+        $content = file_get_contents($userDocPath);
+        if (empty($content)) {
+            return null;
+        }
+
+        return [
+            'path' => $userDocPath,
+            'content' => $content,
+            'size' => strlen($content),
+            'sections' => $this->parseDocumentationSections($content),
+            'last_modified' => filemtime($userDocPath),
+            'user_features' => $this->extractUserFeatures($content),
+            'workflows' => $this->extractWorkflows($content),
+            'user_actions' => $this->extractUserActions($content)
+        ];
+    }
+
+    /**
+     * Získaj cestu k user dokumentácii
+     */
+    private function getUserDocumentationPath(string $filePath): string
+    {
+        $userDocsPath = config('digidocs.paths.user_docs', 'docs/user');
+        
+        // Převeď cestu souboru na cestu user dokumentace
+        $relativePath = str_replace(['app/', '.php'], ['', '.md'], $filePath);
+        
+        return base_path($userDocsPath . '/' . $relativePath);
+    }
+
+    /**
+     * Extrahuj user features z dokumentace
+     */
+    private function extractUserFeatures(string $content): array
+    {
+        $features = [];
+        
+        // Hledej sekce s user features
+        if (preg_match_all('/##\s*([^#\n]+)/i', $content, $matches)) {
+            foreach ($matches[1] as $feature) {
+                $feature = trim($feature);
+                if (!empty($feature)) {
+                    $features[] = $feature;
+                }
+            }
+        }
+        
+        return $features;
+    }
+
+    /**
+     * Extrahuj workflows z dokumentace
+     */
+    private function extractWorkflows(string $content): array
+    {
+        $workflows = [];
+        
+        // Hledej sekce s kroky
+        if (preg_match_all('/###\s*([^#\n]+).*?\n((?:\d+\.\s+[^\n]+\n?)+)/s', $content, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $title = trim($match[1]);
+                $stepsText = $match[2];
+                
+                $steps = [];
+                if (preg_match_all('/\d+\.\s+([^\n]+)/', $stepsText, $stepMatches)) {
+                    $steps = array_map('trim', $stepMatches[1]);
+                }
+                
+                if (!empty($steps)) {
+                    $workflows[] = [
+                        'title' => $title,
+                        'steps' => $steps
+                    ];
+                }
+            }
+        }
+        
+        return $workflows;
+    }
+
+    /**
+     * Extrahuj user actions z dokumentace
+     */
+    private function extractUserActions(string $content): array
+    {
+        $actions = [];
+        
+        // Hledej bullet points s akcemi
+        if (preg_match_all('/^-\s+([^\n]+)/m', $content, $matches)) {
+            foreach ($matches[1] as $action) {
+                $action = trim($action);
+                if (!empty($action)) {
+                    $actions[] = $action;
+                }
+            }
+        }
+        
+        return $actions;
+    }
 }

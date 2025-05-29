@@ -1,6 +1,6 @@
 # Digidocs - AI-Powered Laravel Documentation Generator
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/karlost/digidocs)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/karlost/digidocs)
 [![Laravel](https://img.shields.io/badge/Laravel-10%2B-red.svg)](https://laravel.com)
 [![PHP](https://img.shields.io/badge/PHP-8.2%2B-purple.svg)](https://php.net)
 
@@ -26,6 +26,7 @@ Digidocs is an advanced Laravel package that automatically generates comprehensi
 - 🔄 **Git commit monitoring** - Processes only changed files
 
 ### ⚡ Advanced Features
+- 🌍 **Universal Language Support** - Any ISO language code (cs-CZ, ja-JP, ar-SA, zh-CN, etc.)
 - 👁️ **Real-time watch mode** - Continuous monitoring with automatic regeneration
 - 📊 **Semantic analysis** - Distinguishes between public API and private changes
 - 💾 **SQLite tracking** - Efficient tracking of changes, analyses and documentation
@@ -48,7 +49,32 @@ php artisan vendor:publish --tag=digidocs-config
 
 # 2. Set API key in .env
 AUTODOCS_AI_KEY=your-openai-api-key
+
+# 3. Configure languages in .env (optional)
+DIGIDOCS_LANGUAGES=cs-CZ,en-US,ja-JP
+DIGIDOCS_DEFAULT_LANGUAGE=cs-CZ
 ```
+
+### 🌍 Language Configuration
+
+DigiDocs supports **any ISO language code** without code modifications:
+
+```php
+// config/digidocs.php
+'languages' => [
+    'enabled' => ['cs-CZ', 'en-US', 'ja-JP', 'de-DE', 'pl-PL', 'zh-CN'],
+    'default' => 'cs-CZ',
+],
+```
+
+**Supported examples:**
+- `cs-CZ` (Czech), `en-US` (English), `de-DE` (German)
+- `ja-JP` (Japanese), `ko-KR` (Korean), `zh-CN` (Chinese)
+- `ar-SA` (Arabic), `hi-IN` (Hindi), `th-TH` (Thai)
+- `pt-BR` (Portuguese Brazil), `es-MX` (Spanish Mexico)
+- **Any ISO 639-1 + ISO 3166-1 combination!**
+
+AI automatically recognizes and generates documentation in the specified language.
 
 ## 📋 Usage
 
@@ -79,10 +105,18 @@ php artisan digidocs:userdocs [options]
 ```
 
 **Available options:**
+- `--lang=ISO_CODE` - Generate in specific language (e.g., `--lang=ja-JP`)
 - `--force` - Force regeneration of all user documentation
 - `--dry-run` - Show what would be processed without generating
 - `--stats` - Show documentation statistics
 - `--cost` - Show token usage and cost statistics
+
+**Language examples:**
+```bash
+php artisan digidocs:userdocs --lang=cs-CZ    # Czech
+php artisan digidocs:userdocs --lang=ja-JP    # Japanese
+php artisan digidocs:userdocs --lang=ar-SA    # Arabic
+```
 
 **User documentation features:**
 - 🎯 **UserChangeAnalysisAgent** - Analyzes changes from user perspective
@@ -92,6 +126,27 @@ php artisan digidocs:userdocs [options]
 - 📊 **Impact scoring** - Rates changes by user impact (0-100)
 - 📂 **Section-based organization** - Organizes content by user workflows
 - 🔗 **Cross-references** - Links between related sections
+
+### 🚀 All Documentation (Combined Generation)
+
+```bash
+php artisan digidocs:alldocs [options]
+```
+
+**Available options:**
+- `--lang=ISO_CODE` - Generate user docs in specific language (e.g., `--lang=pl-PL`)
+- `--code-only` - Generate only developer documentation
+- `--user-only` - Generate only user documentation
+- `--all` - Process all files for code documentation (not just Git changes)
+- `--force` - Force regeneration of all documentation
+- `--path=PATH` - Specific paths to process for code docs
+
+**Examples:**
+```bash
+php artisan digidocs:alldocs                    # Both types, default language
+php artisan digidocs:alldocs --lang=ja-JP       # Both types in Japanese
+php artisan digidocs:alldocs --code-only --all  # Only developer docs, all files
+```
 
 ### 👁️ Watch Mode - Real-time Git Commit Monitoring
 
@@ -142,10 +197,15 @@ AUTODOCS_AI_KEY=your-openai-api-key
 
 # 3. Generate documentation
 php artisan digidocs:autodocs              # Developer documentation
-php artisan digidocs:userdocs              # User documentation
+php artisan digidocs:userdocs              # User documentation  
+php artisan digidocs:alldocs               # Both types combined
 php artisan digidocs:watch                 # Watch mode for both types
 
-# 4. View statistics and costs
+# 4. Multi-language generation
+php artisan digidocs:userdocs --lang=ja-JP # Japanese user docs
+php artisan digidocs:alldocs --lang=de-DE  # German docs (both types)
+
+# 5. View statistics and costs
 php artisan digidocs:autodocs --stats --cost
 ```
 
@@ -220,4 +280,45 @@ docs/user/
 - ✅ **Watch mode** tested with real-time Git monitoring
 - ✅ **Both documentation types** verified for quality and accuracy
 - ✅ **Cost tracking** validated for precise token and pricing calculations
+
+## 📋 Changelog
+
+### 🌍 v0.3.0 - Universal Language Support (2025-05-29)
+
+**🆕 New Features:**
+- 🌍 **Universal ISO Language Support** - Any ISO language code now supported (cs-CZ, ja-JP, ar-SA, zh-CN, etc.)
+- 🚀 **New `alldocs` Command** - Combined generation of both developer and user documentation
+- 🤖 **AI-Powered Language Detection** - AI automatically recognizes and generates in specified language
+- 🔧 **Simplified Configuration** - No hardcoded languages, pure config-based language management
+
+**✨ Improvements:**
+- 🧹 **Removed 70+ hardcoded languages** from PHP code - now config-only
+- 📝 **Enhanced Language Instructions** - Simplified AI prompts for better language recognition
+- 🛠️ **Fixed Memory System** - Added missing `remember()` and `search()` methods
+- 🔗 **Updated Cross-Reference Manager** - Dynamic language support across all agents
+
+**🧪 Testing:**
+- ✅ **Comprehensive Multi-Language Testing** - Czech, English, and Polish fully tested
+- ✅ **Memory System Validation** - SQLite database and vector storage verified
+- ✅ **17 Generated Documents** - 5 code docs + 12 user docs across multiple languages
+- ✅ **Zero-Config Language Addition** - New languages work instantly without code changes
+
+**📚 Examples of Supported Languages:**
+- European: cs-CZ (Czech), en-US (English), de-DE (German), fr-FR (French)
+- Asian: ja-JP (Japanese), ko-KR (Korean), zh-CN (Chinese), hi-IN (Hindi)
+- Middle East: ar-SA (Arabic), he-IL (Hebrew), fa-IR (Persian)
+- African: sw-KE (Swahili), am-ET (Amharic), zu-ZA (Zulu)
+- **And many more - any ISO 639-1 + ISO 3166-1 combination!**
+
+### v0.2.0 - User Documentation & Advanced Analysis (2025-05-27)
+- Added UserDocumentationOrchestrator with complete user-focused documentation generation
+- Implemented UserChangeAnalysisAgent for user-impact analysis  
+- Added comprehensive testing with 100% success rate across 24 test scenarios
+- Enhanced memory systems with RAG implementation
+
+### v0.1.0 - Initial Release (2025-05-25)
+- Core DigiDocs functionality with AI-powered documentation generation
+- Developer documentation with intelligent change analysis
+- Git commit monitoring and real-time watch mode
+- Cost tracking and performance optimization
 

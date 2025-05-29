@@ -11,12 +11,14 @@ use Digihood\Digidocs\Tools\AstCompareTool;
 use Digihood\Digidocs\Tools\SemanticAnalysisTool;
 use Digihood\Digidocs\Services\DocumentationAnalyzer;
 use Digihood\Digidocs\Services\CostTracker;
+use Digihood\Digidocs\Services\CodeDocumentationMemory;
 use Exception;
 
 class ChangeAnalysisAgent extends Agent
 {
     private ?DocumentationAnalyzer $documentationAnalyzer = null;
     private ?CostTracker $costTracker = null;
+    private ?CodeDocumentationMemory $memory = null;
 
     private function getDocumentationAnalyzer(): DocumentationAnalyzer
     {
@@ -33,6 +35,15 @@ class ChangeAnalysisAgent extends Agent
     {
         $this->costTracker = $costTracker;
         $this->observe($costTracker);
+        return $this;
+    }
+
+    /**
+     * Nastaví memory service pro RAG context
+     */
+    public function setMemory(CodeDocumentationMemory $memory): self
+    {
+        $this->memory = $memory;
         return $this;
     }
 
@@ -55,10 +66,13 @@ class ChangeAnalysisAgent extends Agent
             ],
             steps: [
                 "Use all available tools for comprehensive change analysis",
+                "Consider existing documentation context when analyzing changes",
+                "Check if changes affect documented APIs or behavior",
                 "Distinguish between cosmetic changes (whitespace, comments) and significant changes",
                 "Structural changes (new classes, methods, properties) require documentation updates",
                 "Semantic changes (logic changes, parameters) also require updates",
                 "Changes only in comments or formatting usually don't require updates",
+                "Identify which other documentation might be affected by these changes",
                 "Provide clear reasoning for your decision with specific evidence",
                 "Include confidence score for your decision",
                 "If uncertain, recommend documentation update for safety"
@@ -108,13 +122,29 @@ class ChangeAnalysisAgent extends Agent
 
             // NOVÉ: Získej existující dokumentaci
             $existingDoc = $this->getDocumentationAnalyzer()->analyzeExistingDocumentation($filePath);
+            
+            // Pokud neexistuje dokumentace, vynutit regeneraci
+            if (!$existingDoc) {
+                \Log::info("No existing documentation for {$filePath} - forcing documentation generation");
+                $analysis = [
+                    'should_regenerate' => true,
+                    'confidence' => 1.0,
+                    'reason' => 'no_existing_doc',
+                    'reasoning' => ['Neexistuje dokumentace - vygenerovat novou'],
+                    'change_summary' => [],
+                    'semantic_score' => 100,
+                    'existing_doc_path' => null,
+                    'doc_relevance_score' => 100,
+                    'affected_doc_sections' => []
+                ];
+            } else {
+                // NOVÉ: Analyzuj strukturu kódu
+                $oldStructure = $oldContent ? $this->getDocumentationAnalyzer()->parseCodeStructure($oldContent) : [];
+                $newStructure = $this->getDocumentationAnalyzer()->parseCodeStructure($newContent);
 
-            // NOVÉ: Analyzuj strukturu kódu
-            $oldStructure = $oldContent ? $this->getDocumentationAnalyzer()->parseCodeStructure($oldContent) : [];
-            $newStructure = $this->getDocumentationAnalyzer()->parseCodeStructure($newContent);
-
-            // Proveď rozšířenou analýzu změn - POUZE heuristická analýza, žádné AI
-            $analysis = $this->analyzeChangesWithDocumentation($filePath, $oldContent, $newContent, $oldStructure, $newStructure, $existingDoc);
+                // Proveď rozšířenou analýzu změn - POUZE heuristická analýza, žádné AI
+                $analysis = $this->analyzeChangesWithDocumentation($filePath, $oldContent, $newContent, $oldStructure, $newStructure, $existingDoc);
+            }
 
             // Zaznamenej analýzu do databáze
             $this->recordAnalysis($filePath, $analysis);
@@ -252,11 +282,25 @@ class ChangeAnalysisAgent extends Agent
             ];
         }
 
+        // Získej RAG kontext pokud je k dispozici
+        $ragContext = [];
+        if ($this->memory) {
+            $ragContext = $this->memory->getCodeDocumentationContext($filePath);
+            
+            // Zkontroluj ovlivněné dokumentace
+            $affectedDocs = $this->memory->updateRelatedDocumentation($filePath, [
+                'modified_classes' => $this->extractModifiedClasses($oldStructure, $newStructure),
+                'modified_methods' => $this->extractModifiedMethods($oldStructure, $newStructure)
+            ]);
+        }
+
         // Vypočítej dopad na dokumentaci
         $codeChanges = [
             'old_structure' => $oldStructure,
             'new_structure' => $newStructure,
-            'content_changed' => true
+            'content_changed' => true,
+            'rag_context' => $ragContext,
+            'affected_docs' => $affectedDocs ?? []
         ];
 
         $docRelevanceScore = $this->getDocumentationAnalyzer()->calculateDocumentationRelevance($codeChanges, $existingDoc);
@@ -793,5 +837,117 @@ class ChangeAnalysisAgent extends Agent
         $content = trim($content);
 
         return $content;
+    }
+
+    /**
+     * Extrahuje modifikované třídy
+     */
+    private function extractModifiedClasses(array $oldStructure, array $newStructure): array
+    {
+        $modifiedClasses = [];
+        
+        $oldClasses = array_column($oldStructure['classes'] ?? [], 'name');
+        $newClasses = array_column($newStructure['classes'] ?? [], 'name');
+        
+        // Přidané třídy
+        $addedClasses = array_diff($newClasses, $oldClasses);
+        foreach ($addedClasses as $class) {
+            $modifiedClasses[] = $class;
+        }
+        
+        // Zkontroluj změněné třídy
+        foreach ($oldStructure['classes'] ?? [] as $oldClass) {
+            foreach ($newStructure['classes'] ?? [] as $newClass) {
+                if ($oldClass['name'] === $newClass['name']) {
+                    // Zkontroluj změny v metodách nebo vlastnostech
+                    $oldMethods = array_column($oldClass['methods'] ?? [], 'name');
+                    $newMethods = array_column($newClass['methods'] ?? [], 'name');
+                    
+                    if ($oldMethods !== $newMethods) {
+                        $modifiedClasses[] = $oldClass['name'];
+                    }
+                    break;
+                }
+            }
+        }
+        
+        return array_unique($modifiedClasses);
+    }
+
+    /**
+     * Extrahuje modifikované metody
+     */
+    private function extractModifiedMethods(array $oldStructure, array $newStructure): array
+    {
+        $modifiedMethods = [];
+        
+        foreach ($oldStructure['classes'] ?? [] as $oldClass) {
+            foreach ($newStructure['classes'] ?? [] as $newClass) {
+                if ($oldClass['name'] === $newClass['name']) {
+                    $oldMethods = $oldClass['methods'] ?? [];
+                    $newMethods = $newClass['methods'] ?? [];
+                    
+                    // Porovnej metody
+                    foreach ($oldMethods as $oldMethod) {
+                        $found = false;
+                        foreach ($newMethods as $newMethod) {
+                            if ($oldMethod['name'] === $newMethod['name']) {
+                                // Zkontroluj signaturu
+                                if ($this->hasMethodSignatureChanged($oldMethod, $newMethod)) {
+                                    $modifiedMethods[] = $oldClass['name'] . '::' . $oldMethod['name'];
+                                }
+                                $found = true;
+                                break;
+                            }
+                        }
+                        if (!$found) {
+                            $modifiedMethods[] = $oldClass['name'] . '::' . $oldMethod['name'];
+                        }
+                    }
+                    
+                    // Přidané metody
+                    foreach ($newMethods as $newMethod) {
+                        $found = false;
+                        foreach ($oldMethods as $oldMethod) {
+                            if ($oldMethod['name'] === $newMethod['name']) {
+                                $found = true;
+                                break;
+                            }
+                        }
+                        if (!$found) {
+                            $modifiedMethods[] = $newClass['name'] . '::' . $newMethod['name'];
+                        }
+                    }
+                }
+            }
+        }
+        
+        return array_unique($modifiedMethods);
+    }
+
+    /**
+     * Zkontroluje jestli se změnila signatura metody
+     */
+    private function hasMethodSignatureChanged(array $oldMethod, array $newMethod): bool
+    {
+        // Porovnej parametry
+        $oldParams = array_map(function($p) {
+            return ($p['type'] ?? '') . ' $' . $p['name'];
+        }, $oldMethod['parameters'] ?? []);
+        
+        $newParams = array_map(function($p) {
+            return ($p['type'] ?? '') . ' $' . $p['name'];
+        }, $newMethod['parameters'] ?? []);
+        
+        if ($oldParams !== $newParams) {
+            return true;
+        }
+        
+        // Porovnej návratový typ
+        if (($oldMethod['return_type'] ?? '') !== ($newMethod['return_type'] ?? '')) {
+            return true;
+        }
+        
+        return false;
     }
 }

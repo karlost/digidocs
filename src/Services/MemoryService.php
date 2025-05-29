@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\File;
 
 class MemoryService
 {
-    private PDO $db;
-    private string $dbPath;
+    protected PDO $db;
+    protected string $dbPath;
 
     public function __construct()
     {
@@ -545,6 +545,55 @@ class MemoryService
                 ON token_usage(file_path)
             ");
 
+            // User documentation tables
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS user_documented_files (
+                    file_path TEXT PRIMARY KEY,
+                    file_hash TEXT NOT NULL,
+                    documentation_path TEXT,
+                    last_documented_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_user_last_documented
+                ON user_documented_files(last_documented_at)
+            ");
+
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS user_git_commits (
+                    commit_hash TEXT PRIMARY KEY,
+                    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_user_processed_at
+                ON user_git_commits(processed_at)
+            ");
+
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS user_change_analysis (
+                    file_path TEXT,
+                    file_hash TEXT,
+                    should_regenerate INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    reason TEXT,
+                    user_impact_score INTEGER,
+                    analysis_data TEXT,
+                    analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    existing_user_doc_path TEXT,
+                    affected_user_features TEXT,
+                    PRIMARY KEY (file_path, file_hash)
+                )
+            ");
+
+            $db->exec("
+                CREATE INDEX IF NOT EXISTS idx_user_change_analysis_analyzed_at
+                ON user_change_analysis(analyzed_at)
+            ");
+
         } catch (PDOException $e) {
             throw new \RuntimeException("Nelze vytvořit AutoDocs databázi: " . $e->getMessage());
         }
@@ -687,8 +736,435 @@ class MemoryService
                     ON token_usage(file_path)
                 ");
             }
+
+            // Zkontroluj a vytvoř user_documented_files tabulku
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_documented_files'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE user_documented_files (
+                        file_path TEXT PRIMARY KEY,
+                        file_hash TEXT NOT NULL,
+                        documentation_path TEXT,
+                        last_documented_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_user_last_documented
+                    ON user_documented_files(last_documented_at)
+                ");
+            }
+
+            // Zkontroluj a vytvoř user_git_commits tabulku
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_git_commits'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE user_git_commits (
+                        commit_hash TEXT PRIMARY KEY,
+                        processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_user_processed_at
+                    ON user_git_commits(processed_at)
+                ");
+            }
+
+            // Zkontroluj a vytvoř user_change_analysis tabulku
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_change_analysis'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE user_change_analysis (
+                        file_path TEXT,
+                        file_hash TEXT,
+                        should_regenerate INTEGER NOT NULL,
+                        confidence REAL NOT NULL,
+                        reason TEXT,
+                        user_impact_score INTEGER,
+                        analysis_data TEXT,
+                        analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        existing_user_doc_path TEXT,
+                        affected_user_features TEXT,
+                        PRIMARY KEY (file_path, file_hash)
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_user_change_analysis_analyzed_at
+                    ON user_change_analysis(analyzed_at)
+                ");
+            }
+
+            // Zkontroluj a vytvoř documentation_chunks tabulku pro RAG
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='documentation_chunks'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE documentation_chunks (
+                        file_path TEXT PRIMARY KEY,
+                        hash TEXT NOT NULL,
+                        chunk_count INTEGER NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_documentation_chunks_updated
+                    ON documentation_chunks(updated_at)
+                ");
+            }
+
+            // Zkontroluj a vytvoř code_metrics tabulku pro RAG
+            $stmt = $this->db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='code_metrics'");
+            $stmt->execute();
+
+            if (!$stmt->fetch()) {
+                $this->db->exec("
+                    CREATE TABLE code_metrics (
+                        file_path TEXT PRIMARY KEY,
+                        hash TEXT NOT NULL,
+                        class_count INTEGER DEFAULT 0,
+                        method_count INTEGER DEFAULT 0,
+                        line_count INTEGER DEFAULT 0,
+                        complexity INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ");
+
+                $this->db->exec("
+                    CREATE INDEX idx_code_metrics_complexity
+                    ON code_metrics(complexity)
+                ");
+            }
         } catch (PDOException $e) {
             // Ignoruj chyby při upgrade - databáze může být již aktuální
         }
+    }
+
+    // ========================================
+    // USER DOCUMENTATION METHODS
+    // ========================================
+
+    /**
+     * Zaznamená vygenerovanou user dokumentaci
+     */
+    public function recordUserDocumentation(string $filePath, string $hash, string $docPath): void
+    {
+        $stmt = $this->db->prepare("
+            INSERT OR REPLACE INTO user_documented_files
+            (file_path, file_hash, documentation_path, last_documented_at)
+            VALUES (?, ?, ?, datetime('now'))
+        ");
+        $stmt->execute([$filePath, $hash, $docPath]);
+    }
+
+    /**
+     * Get user documentation info for a file
+     */
+    public function getUserDocumentationInfo(string $filePath): ?array
+    {
+        $stmt = $this->db->prepare("
+            SELECT file_hash, last_documented_at, documentation_path
+            FROM user_documented_files
+            WHERE file_path = ?
+        ");
+        $stmt->execute([$filePath]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$result) {
+            return null;
+        }
+        
+        return [
+            'file_hash' => $result['file_hash'],
+            'doc_path' => $result['documentation_path'],
+            'last_documented_at' => $result['last_documented_at']
+        ];
+    }
+
+    /**
+     * Zaznamenej user analýzu do databáze
+     */
+    public function recordUserAnalysis(string $filePath, string $hash, array $analysis): void
+    {
+        try {
+            $stmt = $this->db->prepare("
+                INSERT OR REPLACE INTO user_change_analysis
+                (file_path, file_hash, should_regenerate, confidence, reason, user_impact_score, analysis_data, analyzed_at, existing_user_doc_path, affected_user_features)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+            ");
+
+            $stmt->execute([
+                $filePath,
+                $hash,
+                $analysis['should_regenerate'] ? 1 : 0,
+                $analysis['confidence'] ?? 0,
+                $analysis['reason'] ?? 'unknown',
+                $analysis['user_impact_score'] ?? 0,
+                json_encode($analysis),
+                $analysis['existing_user_doc_path'] ?? null,
+                isset($analysis['affected_user_features']) ? json_encode($analysis['affected_user_features']) : null
+            ]);
+        } catch (\Exception $e) {
+            \Log::warning("Failed to record user analysis: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Získá posledně zpracovaný Git commit pro user docs
+     */
+    public function getLastProcessedUserCommit(): ?string
+    {
+        $stmt = $this->db->prepare("
+            SELECT commit_hash
+            FROM user_git_commits
+            ORDER BY processed_at DESC
+            LIMIT 1
+        ");
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $result ? $result['commit_hash'] : null;
+    }
+
+    /**
+     * Uloží posledně zpracovaný Git commit pro user docs
+     */
+    public function setLastProcessedUserCommit(string $commitHash): void
+    {
+        $stmt = $this->db->prepare("
+            INSERT OR REPLACE INTO user_git_commits
+            (commit_hash, processed_at)
+            VALUES (?, datetime('now'))
+        ");
+        $stmt->execute([$commitHash]);
+    }
+
+    /**
+     * Zkontroluje jestli už byly nějaké user soubory zpracovány
+     */
+    public function hasAnyUserDocumentedFiles(): bool
+    {
+        $stmt = $this->db->prepare("SELECT COUNT(*) FROM user_documented_files");
+        $stmt->execute();
+        $count = $stmt->fetchColumn();
+
+        return $count > 0;
+    }
+
+    /**
+     * Získá seznam všech zpracovaných user souborů
+     */
+    public function getUserDocumentedFiles(): array
+    {
+        $stmt = $this->db->prepare("SELECT file_path FROM user_documented_files");
+        $stmt->execute();
+
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * Získá statistiky user dokumentace
+     */
+    public function getUserStats(): array
+    {
+        $stmt = $this->db->query("
+            SELECT
+                COUNT(*) as total_files,
+                COUNT(CASE WHEN datetime(last_documented_at) > datetime('now', '-7 days') THEN 1 END) as recent_updates
+            FROM user_documented_files
+        ");
+
+        $basicStats = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['total_files' => 0, 'recent_updates' => 0];
+
+        // Přidej statistiky user analýzy
+        $analysisStats = $this->getUserAnalysisStats();
+
+        return array_merge($basicStats, $analysisStats);
+    }
+
+    /**
+     * Získá statistiky user analýzy
+     */
+    public function getUserAnalysisStats(): array
+    {
+        try {
+            $stmt = $this->db->query("
+                SELECT
+                    COUNT(*) as total_analyses,
+                    COUNT(CASE WHEN should_regenerate = 1 THEN 1 END) as regeneration_recommended,
+                    COUNT(CASE WHEN should_regenerate = 0 THEN 1 END) as regeneration_skipped,
+                    AVG(confidence) as avg_confidence,
+                    AVG(user_impact_score) as avg_user_impact_score,
+                    COUNT(CASE WHEN datetime(analyzed_at) > datetime('now', '-24 hours') THEN 1 END) as recent_analyses
+                FROM user_change_analysis
+            ");
+
+            $stats = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$stats || $stats['total_analyses'] == 0) {
+                return [
+                    'analysis_enabled' => config('digidocs.intelligent_analysis.enabled', true),
+                    'total_analyses' => 0,
+                    'regeneration_recommended' => 0,
+                    'regeneration_skipped' => 0,
+                    'skip_rate' => 0.0,
+                    'avg_confidence' => 0.0,
+                    'avg_user_impact_score' => 0.0,
+                    'recent_analyses' => 0
+                ];
+            }
+
+            $skipRate = $stats['total_analyses'] > 0
+                ? round(($stats['regeneration_skipped'] / $stats['total_analyses']) * 100, 1)
+                : 0.0;
+
+            return [
+                'analysis_enabled' => config('digidocs.intelligent_analysis.enabled', true),
+                'total_analyses' => (int) $stats['total_analyses'],
+                'regeneration_recommended' => (int) $stats['regeneration_recommended'],
+                'regeneration_skipped' => (int) $stats['regeneration_skipped'],
+                'skip_rate' => $skipRate,
+                'avg_confidence' => round((float) $stats['avg_confidence'], 3),
+                'avg_user_impact_score' => round((float) $stats['avg_user_impact_score'], 1),
+                'recent_analyses' => (int) $stats['recent_analyses']
+            ];
+
+        } catch (\Exception $e) {
+            return [
+                'analysis_enabled' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Získá statistiky nákladů a tokenů pro user docs
+     */
+    public function getUserCostStats(): array
+    {
+        try {
+            // Základní statistiky pro user dokumentaci
+            $stmt = $this->db->query("
+                SELECT
+                    COUNT(*) as total_calls,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    SUM(cost) as total_cost
+                FROM token_usage
+                WHERE file_path IN (SELECT file_path FROM user_documented_files)
+                   OR file_path LIKE '%user%'
+            ");
+
+            $basicStats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [
+                'total_calls' => 0,
+                'total_input_tokens' => 0,
+                'total_output_tokens' => 0,
+                'total_tokens' => 0,
+                'total_cost' => 0.0
+            ];
+
+            // Statistiky podle modelů pro user docs
+            $stmt = $this->db->query("
+                SELECT
+                    model,
+                    COUNT(*) as calls,
+                    SUM(input_tokens) as input_tokens,
+                    SUM(output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    SUM(cost) as cost
+                FROM token_usage
+                WHERE file_path IN (SELECT file_path FROM user_documented_files)
+                   OR file_path LIKE '%user%'
+                GROUP BY model
+                ORDER BY cost DESC
+            ");
+
+            $byModel = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $byModel[$row['model']] = [
+                    'calls' => (int) $row['calls'],
+                    'input_tokens' => (int) $row['input_tokens'],
+                    'output_tokens' => (int) $row['output_tokens'],
+                    'total_tokens' => (int) $row['total_tokens'],
+                    'cost' => (float) $row['cost']
+                ];
+            }
+
+            // Nedávná aktivita pro user docs (posledních 7 dní)
+            $stmt = $this->db->query("
+                SELECT
+                    COUNT(*) as calls,
+                    SUM(total_tokens) as tokens,
+                    SUM(cost) as cost
+                FROM token_usage
+                WHERE datetime(created_at) > datetime('now', '-7 days')
+                  AND (file_path IN (SELECT file_path FROM user_documented_files) OR file_path LIKE '%user%')
+            ");
+
+            $recentActivity = $stmt->fetch(PDO::FETCH_ASSOC) ?: [
+                'calls' => 0,
+                'tokens' => 0,
+                'cost' => 0.0
+            ];
+
+            return [
+                'total_calls' => (int) $basicStats['total_calls'],
+                'total_input_tokens' => (int) $basicStats['total_input_tokens'],
+                'total_output_tokens' => (int) $basicStats['total_output_tokens'],
+                'total_tokens' => (int) $basicStats['total_tokens'],
+                'total_cost' => (float) $basicStats['total_cost'],
+                'by_model' => $byModel,
+                'recent_activity' => [
+                    'calls' => (int) $recentActivity['calls'],
+                    'tokens' => (int) $recentActivity['tokens'],
+                    'cost' => (float) $recentActivity['cost']
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            return [
+                'total_calls' => 0,
+                'total_input_tokens' => 0,
+                'total_output_tokens' => 0,
+                'total_tokens' => 0,
+                'total_cost' => 0.0,
+                'by_model' => [],
+                'recent_activity' => ['calls' => 0, 'tokens' => 0, 'cost' => 0.0],
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Smaže záznamy user dokumentace pro neexistující soubory
+     */
+    public function cleanupUserDocs(): int
+    {
+        $stmt = $this->db->query("SELECT file_path FROM user_documented_files");
+        $files = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $deleted = 0;
+        foreach ($files as $file) {
+            if (!file_exists(base_path($file))) {
+                $deleteStmt = $this->db->prepare("DELETE FROM user_documented_files WHERE file_path = ?");
+                $deleteStmt->execute([$file]);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
     }
 }
