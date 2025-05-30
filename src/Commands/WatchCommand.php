@@ -275,11 +275,14 @@ class WatchCommand extends Command
     /**
      * Signal handler pro graceful shutdown
      */
-    public function handleSignal(int $signal): void
+    public function handleSignal(int $signal, int|false $previousExitCode = 0): int|false
     {
         $this->shouldStop = true;
         $this->newLine();
         $this->line("🛑 Received stop signal, shutting down gracefully...");
+        
+        // Return the previous exit code or 0 if none
+        return $previousExitCode ?: 0;
     }
 
 }
